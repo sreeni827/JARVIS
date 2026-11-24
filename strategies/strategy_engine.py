@@ -18,8 +18,11 @@ class StrategyEngine:
         with open(CONFIG_FILE, "r", encoding="utf-8") as file:
             self.config = yaml.safe_load(file)
 
-        self.settings = self.config["settings"]
+    @property
+    def settings(self):
+        return self.config["settings"]  
 
+    
     def load_latest_rankings(self):
 
         files = sorted(
