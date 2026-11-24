@@ -1,0 +1,83 @@
+walk_forward:
+
+  initial_capital: 100.00
+
+  historical_days: 1500
+
+  warmup_candles: 250
+
+  research_start_date: "2024-11-22"
+
+  research_end_date: "2026-11-23"
+
+  windows:
+
+    training_months: 6
+
+    testing_months: 3
+
+    step_months: 3
+
+  symbols:
+
+    - AAPL
+    - MSFT
+    - NVDA
+    - AMD
+    - AMZN
+    - META
+    - GOOGL
+    - TSLA
+    - WMT
+    - COST
+    - SPY
+    - QQQ
+
+  parameter_candidates:
+
+    minimum_score:
+      - 55
+      - 65
+      - 75
+
+    stop_atr_multiplier:
+      - 1.5
+      - 2.0
+
+    risk_reward_ratio:
+      - 2.0
+      - 3.0
+
+  selection:
+
+    minimum_training_trades: 30
+
+    minimum_profit_factor: 1.25
+
+    minimum_expectancy: 0.00
+
+    minimum_average_return_percent: 0.00
+
+    maximum_drawdown_percent: 5.00
+
+    maximum_risk_breach_percent: 10.00
+
+    allow_no_selection: true
+
+  execution:
+
+    slippage_percent: 0.10
+
+    transaction_fee_percent: 0.05
+
+  safety:
+
+    historical_simulation_only: true
+
+    live_trading_enabled: false
+
+    automatic_strategy_activation: false
+
+    require_forward_validation: true
+
+    allow_test_data_for_selection: false
