@@ -1,0 +1,167 @@
+portfolio:
+
+  name: JARVIS_PORTFOLIO
+
+  version: "0.8.6"
+
+  account:
+
+    initial_capital: 100.00
+
+    currency: USD
+
+    fractional_shares: true
+
+    quantity_precision: 6
+
+    monthly_contribution: 100.00
+
+    simulate_contributions: false
+
+    margin_enabled: false
+
+    short_selling_enabled: false
+
+  historical_data:
+
+    historical_days: 1500
+
+    warmup_candles: 250
+
+    start_date: "2024-11-22"
+
+    end_date: "2026-11-23"
+
+    timeframe: DAY
+
+    require_aligned_sessions: true
+
+  universe:
+
+    symbols:
+
+      - AAPL
+      - MSFT
+      - NVDA
+      - AMD
+      - AMZN
+      - META
+      - GOOGL
+      - TSLA
+      - WMT
+      - COST
+      - SPY
+      - QQQ
+
+  risk:
+
+    risk_per_trade_percent: 0.50
+
+    maximum_daily_loss_percent: 1.00
+
+    maximum_drawdown_percent: 5.00
+
+    maximum_position_percent: 20.00
+
+    maximum_total_exposure_percent: 60.00
+
+    maximum_open_positions: 3
+
+    maximum_aggregate_open_risk_percent: 1.00
+
+    minimum_order_value: 1.00
+
+    use_starting_capital_ceiling: true
+
+    allow_duplicate_positions: false
+
+    allow_pyramiding: false
+
+    halt_new_entries_on_daily_loss: true
+
+    halt_on_maximum_drawdown: true
+
+    liquidate_on_drawdown_breach: true
+
+  execution:
+
+    slippage_percent: 0.10
+
+    transaction_fee_percent: 0.05
+
+    entry_timing: NEXT_SESSION_OPEN
+
+    stop_target_conflict: STOP_FIRST
+
+    maximum_holding_sessions: 20
+
+    liquidate_at_end: true
+
+    allow_same_session_reentry: false
+
+  opportunity_selection:
+
+    minimum_score: 55
+
+    ranking_method: OPPORTUNITY_SCORE
+
+    ranking_direction: DESCENDING
+
+    tie_breaker: SYMBOL_ASCENDING
+
+    maximum_new_positions_per_session: 3
+
+  strategy:
+
+    momentum_enabled: true
+
+    breakout_enabled: true
+
+    pullback_enabled: true
+
+    stop_atr_multiplier: 1.5
+
+    risk_reward_ratio: 2.0
+
+    research_only: true
+
+  benchmarks:
+
+    enabled: true
+
+    symbols:
+
+      - SPY
+      - QQQ
+
+    include_cash_benchmark: true
+
+  reporting:
+
+    save_trades: true
+
+    save_equity_curve: true
+
+    save_daily_snapshots: true
+
+    save_rejected_opportunities: true
+
+    save_risk_events: true
+
+    save_position_history: true
+
+  safety:
+
+    historical_simulation_only: true
+
+    live_trading_enabled: false
+
+    broker_order_submission_enabled: false
+
+    automatic_strategy_activation: false
+
+    require_forward_validation: true
+
+    fail_on_missing_market_data: true
+
+    fail_on_accounting_mismatch: true
