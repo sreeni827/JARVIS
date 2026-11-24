@@ -1,0 +1,73 @@
+validation:
+
+  initial_capital: 100.00
+
+  historical_days: 1500
+
+  warmup_candles: 250
+
+  periods:
+
+    development:
+      start_date: "2024-11-22"
+      end_date: "2025-11-23"
+
+    validation:
+      start_date: "2025-11-24"
+      end_date: "2026-05-23"
+
+    historical_test:
+      start_date: "2026-05-24"
+      end_date: "2026-11-23"
+
+  symbols:
+    - AAPL
+    - MSFT
+    - NVDA
+    - AMD
+    - AMZN
+    - META
+    - GOOGL
+    - TSLA
+    - WMT
+    - COST
+    - SPY
+    - QQQ
+
+  qualification:
+
+    minimum_trades: 30
+
+    minimum_profit_factor: 1.50
+
+    minimum_expectancy: 0.00
+
+    minimum_return_percent: 0.00
+
+    maximum_drawdown_percent: 5.00
+
+    maximum_risk_breach_percent: 10.00
+
+  execution_scenarios:
+
+    baseline:
+      slippage_percent: 0.05
+      transaction_fee_percent: 0.02
+
+    moderate:
+      slippage_percent: 0.10
+      transaction_fee_percent: 0.05
+
+    stressed:
+      slippage_percent: 0.25
+      transaction_fee_percent: 0.10
+
+  safety:
+
+    historical_simulation_only: true
+
+    live_trading_enabled: false
+
+    automatic_strategy_activation: false
+
+    require_forward_validation: true
