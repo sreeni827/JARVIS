@@ -1,0 +1,19 @@
+settings:
+  historical_days: 400
+  minimum_candles: 200
+  bullish_threshold: 70
+  bearish_threshold: 30
+  high_volatility_threshold: 2.5
+
+benchmarks:
+  SPY: 40
+  QQQ: 30
+  IWM: 15
+  DIA: 15
+
+weights:
+  long_term_trend: 30
+  medium_term_trend: 25
+  short_term_trend: 20
+  momentum: 15
+  rsi: 10

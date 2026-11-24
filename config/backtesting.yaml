@@ -1,0 +1,32 @@
+backtesting:
+
+  initial_capital: 100.00
+
+  historical_days: 1095
+
+  warmup_candles: 250
+
+  slippage_percent: 0.05
+
+  transaction_fee_percent: 0.02
+
+  maximum_holding_days: 20
+
+  stop_atr_multiplier: 1.5
+
+  risk_reward_ratio: 2.0
+
+  symbols:
+
+    - AAPL
+    - MSFT
+    - NVDA
+    - AMD
+    - AMZN
+    - META
+    - GOOGL
+    - TSLA
+    - WMT
+    - COST
+    - SPY
+    - QQQ

@@ -1,0 +1,17 @@
+weights:
+  trend: 25
+  rsi: 15
+  macd: 15
+  momentum: 15
+  volume: 10
+  moving_averages: 10
+  volatility: 10
+
+thresholds:
+  high_priority: 85
+  strong: 70
+  moderate: 55
+  low: 40
+
+settings:
+  top_candidates: 10

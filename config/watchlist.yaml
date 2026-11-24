@@ -1,0 +1,45 @@
+watchlist:
+
+  technology:
+    - AAPL
+    - MSFT
+    - NVDA
+    - AMD
+    - AVGO
+    - INTC
+    - ORCL
+    - CRM
+
+  communication:
+    - GOOGL
+    - META
+    - NFLX
+
+  consumer:
+    - AMZN
+    - TSLA
+    - WMT
+    - COST
+    - HD
+
+  finance:
+    - JPM
+    - BAC
+    - GS
+    - V
+    - MA
+
+  healthcare:
+    - UNH
+    - JNJ
+    - PFE
+
+  energy:
+    - XOM
+    - CVX
+
+  etfs:
+    - SPY
+    - QQQ
+    - IWM
+    - DIA
