@@ -1,21 +1,31 @@
-from dataclasses import dataclass, replace
-from decimal import Decimal, ROUND_DOWN
 from collections.abc import Mapping
-
-from portfolio.portfolio_config import PortfolioConfig
+from dataclasses import dataclass, replace
+from decimal import ROUND_DOWN, Decimal
 
 from portfolio.models import (
-    PortfolioAccountState,
-    PortfolioPosition,
-    PortfolioTrade,
-    PortfolioOpportunity,
-    PortfolioExecutionResult,
-    PortfolioRiskEvent,
-    positive_decimal,
-    nonnegative_decimal,
-    validate_session
+	PortfolioAccountState,
+	PortfolioExecutionResult,
+	PortfolioOpportunity,
+	PortfolioPosition,
+	PortfolioRiskEvent,
+	PortfolioTrade,
+	positive_decimal,
+	validate_session,
+)
+from portfolio.portfolio_config import PortfolioConfig
+
+from portfolio.decimal_utils import (
+    normalize_price,
+    normalize_money,
+    calculate_buy_price,
+    calculate_sell_price,
+    calculate_notional,
+    calculate_fee,
+    calculate_entry_cost,
+    calculate_planned_risk,
 )
 
+from portfolio.accounting_context import isolated_accounting
 
 D = Decimal
 ZERO = D("0")
@@ -30,25 +40,25 @@ HUNDRED = D("100")
 @dataclass(frozen=True, slots=True)
 class CapitalAllocation:
 
-    approved: bool
+	approved: bool
 
-    reason: str
+	reason: str
 
-    quantity: Decimal = ZERO
+	quantity: Decimal = ZERO
 
-    entry_price: Decimal = ZERO
+	entry_price: Decimal = ZERO
 
-    stop_price: Decimal = ZERO
+	stop_price: Decimal = ZERO
 
-    target_price: Decimal = ZERO
+	target_price: Decimal = ZERO
 
-    entry_fee: Decimal = ZERO
+	entry_fee: Decimal = ZERO
 
-    position_value: Decimal = ZERO
+	position_value: Decimal = ZERO
 
-    entry_cost: Decimal = ZERO
+	entry_cost: Decimal = ZERO
 
-    planned_risk: Decimal = ZERO
+	planned_risk: Decimal = ZERO
 
 
 # ============================================================
@@ -58,1263 +68,1325 @@ class CapitalAllocation:
 
 class CapitalManager:
 
-    def __init__(self, config=None):
-
-        self._config = (
-            config if config is not None
-            else PortfolioConfig()
-        )
-
-        if not isinstance(
-            self._config,
-            PortfolioConfig
-        ):
-
-            raise ValueError(
-                "Invalid portfolio configuration."
-            )
-
-        self._config.validate()
-
-        settings = self._config.config
-
-        risk = settings["risk"]
-
-        execution = settings["execution"]
-
-        account = settings["account"]
-
-        self.initial_capital = D(
-            str(account["initial_capital"])
-        )
-
-        self.maximum_positions = risk[
-            "maximum_open_positions"
-        ]
-
-        self.maximum_position_percent = D(
-            str(risk["maximum_position_percent"])
-        )
-
-        self.maximum_exposure_percent = D(
-            str(risk["maximum_total_exposure_percent"])
-        )
+	@isolated_accounting
+	def __init__(self, config=None):
+
+		self._config = (
+			config if config is not None
+			else PortfolioConfig()
+		)
+
+		if not isinstance(
+			self._config,
+			PortfolioConfig
+		):
+
+			raise ValueError(
+				"Invalid portfolio configuration."
+			)
+
+		self._config.validate()
+
+		settings = self._config.config
+
+		risk = settings["risk"]
+
+		execution = settings["execution"]
+
+		account = settings["account"]
+
+		self.initial_capital = D(
+			str(account["initial_capital"])
+		)
+
+		self.maximum_positions = risk[
+			"maximum_open_positions"
+		]
+
+		self.maximum_position_percent = D(
+			str(risk["maximum_position_percent"])
+		)
+
+		self.maximum_exposure_percent = D(
+			str(risk["maximum_total_exposure_percent"])
+		)
 
-        self.risk_per_trade_percent = D(
-            str(risk["risk_per_trade_percent"])
-        )
+		self.risk_per_trade_percent = D(
+			str(risk["risk_per_trade_percent"])
+		)
 
-        self.maximum_open_risk_percent = D(
-            str(
-                risk[
-                    "maximum_aggregate_open_risk_percent"
-                ]
-            )
-        )
+		self.maximum_open_risk_percent = D(
+			str(
+				risk[
+					"maximum_aggregate_open_risk_percent"
+				]
+			)
+		)
 
-        self.maximum_daily_loss_percent = D(
-            str(risk["maximum_daily_loss_percent"])
-        )
+		self.maximum_daily_loss_percent = D(
+			str(risk["maximum_daily_loss_percent"])
+		)
 
-        self.maximum_drawdown_percent = D(
-            str(risk["maximum_drawdown_percent"])
-        )
+		self.maximum_drawdown_percent = D(
+			str(risk["maximum_drawdown_percent"])
+		)
 
-        self.minimum_order_value = D(
-            str(risk["minimum_order_value"])
-        )
+		self.minimum_order_value = D(
+			str(risk["minimum_order_value"])
+		)
 
-        self.slippage = D(
-            str(execution["slippage_percent"])
-        ) / HUNDRED
+		self.slippage = D(
+			str(execution["slippage_percent"])
+		) / HUNDRED
 
-        self.fee_rate = D(
-            str(execution["transaction_fee_percent"])
-        ) / HUNDRED
+		self.fee_rate = D(
+			str(execution["transaction_fee_percent"])
+		) / HUNDRED
 
-        self.quantity_step = D("1").scaleb(
-            -account["quantity_precision"]
-        )
+		self.quantity_step = D("1").scaleb(
+			-account["quantity_precision"]
+		)
 
-        self.symbols = frozenset(
-            settings["universe"]["symbols"]
-        )
+		self.symbols = frozenset(
+			settings["universe"]["symbols"]
+		)
 
-        self.minimum_score = D(
-            str(
-                settings["opportunity_selection"][
-                    "minimum_score"
-                ]
-            )
-        )
+		self.minimum_score = D(
+			str(
+				settings["opportunity_selection"][
+					"minimum_score"
+				]
+			)
+		)
 
-        self.maximum_new_positions = settings[
-            "opportunity_selection"
-        ]["maximum_new_positions_per_session"]
+		self.maximum_new_positions = settings[
+			"opportunity_selection"
+		]["maximum_new_positions_per_session"]
 
-        self.enabled_strategies = frozenset(
-            name.upper()
-            for name in (
-                "momentum",
-                "breakout",
-                "pullback"
-            )
-            if settings["strategy"][
-                f"{name}_enabled"
-            ]
-        )
+		self.enabled_strategies = frozenset(
+			name.upper()
+			for name in (
+				"momentum",
+				"breakout",
+				"pullback"
+			)
+			if settings["strategy"][
+				f"{name}_enabled"
+			]
+		)
 
-        self.stop_atr_multiplier = D(
-            str(
-                settings["strategy"][
-                    "stop_atr_multiplier"
-                ]
-            )
-        )
+		self.stop_atr_multiplier = D(
+			str(
+				settings["strategy"][
+					"stop_atr_multiplier"
+				]
+			)
+		)
 
-        self.risk_reward_ratio = D(
-            str(
-                settings["strategy"][
-                    "risk_reward_ratio"
-                ]
-            )
-        )
+		self.risk_reward_ratio = D(
+			str(
+				settings["strategy"][
+					"risk_reward_ratio"
+				]
+			)
+		)
 
-        self._state = PortfolioAccountState(
+		self._state = PortfolioAccountState(
 
-            initial_capital=self.initial_capital,
+			initial_capital=self.initial_capital,
 
-            cash=self.initial_capital,
+			cash=self.initial_capital,
 
-            day_start_equity=self.initial_capital,
+			day_start_equity=self.initial_capital,
 
-            peak_equity=self.initial_capital
+			peak_equity=self.initial_capital
 
-        )
+		)
 
-        self._session = None
+		self._session = None
 
-        self._trades = []
+		self._trades = []
 
-        self._risk_events = []
+		self._risk_events = []
 
-        self._closed_symbols = set()
+		self._closed_symbols = set()
 
-        self._session_entries = 0
+		self._session_entries = 0
 
-    # ========================================================
-    # READ-ONLY ACCOUNT ACCESS
-    # ========================================================
+	# ========================================================
+	# READ-ONLY ACCOUNT ACCESS
+	# ========================================================
 
-    @property
-    def state(self):
+	@property
+	@isolated_accounting
+	def state(self):
 
-        return self._state
+		return self._state
 
-    @property
-    def session(self):
+	@property
+	@isolated_accounting
+	def session(self):
 
-        return self._session
+		return self._session
 
-    @property
-    def trades(self):
+	@property
+	@isolated_accounting
+	def trades(self):
 
-        return tuple(self._trades)
+		return tuple(self._trades)
 
-    @property
-    def risk_events(self):
+	@property
+	@isolated_accounting
+	def risk_events(self):
 
-        return tuple(self._risk_events)
+		return tuple(self._risk_events)
 
-    @property
-    def capital_base(self):
+	@property
+	@isolated_accounting
+	def capital_base(self):
 
-        return min(
-            self.state.equity,
-            self.initial_capital
-        )
+		return min(
+			self.state.equity,
+			self.initial_capital
+		)
 
-    @property
-    def maximum_position_value(self):
+	@property
+	@isolated_accounting
+	def maximum_position_value(self):
 
-        return (
-            self.capital_base
-            * self.maximum_position_percent
-            / HUNDRED
-        )
+		return (
+			self.capital_base
+			* self.maximum_position_percent
+			/ HUNDRED
+		)
 
-    @property
-    def maximum_exposure(self):
+	@property
+	@isolated_accounting
+	def maximum_exposure(self):
 
-        return (
-            self.capital_base
-            * self.maximum_exposure_percent
-            / HUNDRED
-        )
+		return (
+			self.capital_base
+			* self.maximum_exposure_percent
+			/ HUNDRED
+		)
 
-    @property
-    def maximum_trade_risk(self):
+	@property
+	@isolated_accounting
+	def maximum_trade_risk(self):
 
-        return (
-            self.capital_base
-            * self.risk_per_trade_percent
-            / HUNDRED
-        )
+		return (
+			self.capital_base
+			* self.risk_per_trade_percent
+			/ HUNDRED
+		)
 
-    @property
-    def maximum_aggregate_risk(self):
+	@property
+	@isolated_accounting
+	def maximum_aggregate_risk(self):
 
-        return (
-            self.capital_base
-            * self.maximum_open_risk_percent
-            / HUNDRED
-        )
+		return (
+			self.capital_base
+			* self.maximum_open_risk_percent
+			/ HUNDRED
+		)
 
-    @property
-    def remaining_exposure(self):
+	@property
+	@isolated_accounting
+	def remaining_exposure(self):
 
-        return max(
+		return max(
 
-            ZERO,
+			ZERO,
 
-            self.maximum_exposure
-            - self.state.total_exposure
+			self.maximum_exposure
+			- self.state.total_exposure
 
-        )
+		)
 
-    @property
-    def remaining_open_risk(self):
+	@property
+	@isolated_accounting
+	def remaining_open_risk(self):
 
-        return max(
+		return max(
 
-            ZERO,
+			ZERO,
 
-            self.maximum_aggregate_risk
-            - self.state.aggregate_open_risk
+			self.maximum_aggregate_risk
+			- self.state.aggregate_open_risk
 
-        )
+		)
 
-    @property
-    def daily_loss_limit(self):
+	@property
+	@isolated_accounting
+	def daily_loss_limit(self):
 
-        return (
+		return (
 
-            self.state.day_start_equity
+			self.state.day_start_equity
 
-            * self.maximum_daily_loss_percent
+			* self.maximum_daily_loss_percent
 
-            / HUNDRED
+			/ HUNDRED
 
-        )
+		)
 
-    @property
-    def remaining_daily_risk(self):
+	@property
+	@isolated_accounting
+	def remaining_daily_risk(self):
 
-        return max(
+		return max(
 
-            ZERO,
+			ZERO,
 
-            self.daily_loss_limit
+			self.daily_loss_limit
 
-            - self.state.daily_loss
+			- self.state.daily_loss
 
-            - self.state.aggregate_open_risk
+			- self.state.aggregate_open_risk
 
-        )
+		)
 
-    @property
-    def remaining_drawdown_risk(self):
+	@property
+	@isolated_accounting
+	def remaining_drawdown_risk(self):
 
-        minimum_equity = (
+		minimum_equity = (
 
-            self.state.peak_equity
+			self.state.peak_equity
 
-            * (
-                D("1")
-                - self.maximum_drawdown_percent
-                / HUNDRED
-            )
+			* (
+				D("1")
+				- self.maximum_drawdown_percent
+				/ HUNDRED
+			)
 
-        )
+		)
 
-        return max(
+		return max(
 
-            ZERO,
+			ZERO,
 
-            self.state.equity
+			self.state.equity
 
-            - minimum_equity
+			- minimum_equity
 
-            - self.state.aggregate_open_risk
+			- self.state.aggregate_open_risk
 
-        )
+		)
 
-    # ========================================================
-    # SESSION MANAGEMENT
-    # ========================================================
+	# ========================================================
+	# SESSION MANAGEMENT
+	# ========================================================
 
-    def require_session(self):
+	@isolated_accounting
+	def require_session(self):
 
-        if self._session is None:
+		if self._session is None:
 
-            raise RuntimeError(
-                "Start a portfolio session first."
-            )
+			raise RuntimeError(
+				"Start a portfolio session first."
+			)
 
-    def start_session(self, session):
+	@isolated_accounting
+	def start_session(self, session):
 
-        validate_session(session, "session")
+		validate_session(session, "session")
 
-        if (
-            self._session is not None
-            and session <= self._session
-        ):
+		if (
+			self._session is not None
+			and session <= self._session
+		):
 
-            raise ValueError(
-                "Sessions must advance chronologically."
-            )
+			raise ValueError(
+				"Sessions must advance chronologically."
+			)
 
-        positions = tuple(
+		positions = tuple(
 
-            replace(
+			replace(
 
-                position,
+				position,
 
-                holding_sessions=(
-                    position.holding_sessions + 1
-                )
+				holding_sessions=(
+					position.holding_sessions + 1
+				)
 
-            )
+			)
 
-            for position in self.state.positions
+			for position in self.state.positions
 
-        )
+		)
 
-        updated = replace(
+		updated = replace(
 
-            self.state,
+			self.state,
 
-            day_start_equity=self.state.equity,
+			day_start_equity=self.state.equity,
 
-            daily_entry_halted=False,
+			daily_entry_halted=False,
 
-            positions=positions
+			positions=positions
 
-        )
+		)
 
-        self._state = updated
+		self._state = updated
 
-        self._session = session
+		self._session = session
 
-        self._closed_symbols.clear()
+		self._closed_symbols.clear()
 
-        self._session_entries = 0
+		self._session_entries = 0
 
-        self.evaluate_risk_thresholds()
+		self.evaluate_risk_thresholds()
 
-        return self.state
+		return self.state
 
-    # ========================================================
-    # ACCOUNT STATE TRANSITION
-    # ========================================================
+	# ========================================================
+	# ACCOUNT STATE TRANSITION
+	# ========================================================
 
-    def build_state(
-        self,
-        cash,
-        positions,
-        realized_pnl
-    ):
+	@isolated_accounting
+	def build_state(
+		self,
+		cash,
+		positions,
+		realized_pnl
+	):
 
-        positions = tuple(positions)
+		positions = tuple(positions)
 
-        market_value = sum(
+		market_value = sum(
 
-            (
-                position.market_value
-                for position in positions
-            ),
+			(
+				position.market_value
+				for position in positions
+			),
 
-            ZERO
+			ZERO
 
-        )
+		)
 
-        equity = cash + market_value
+		cash = normalize_money(cash)
 
-        peak = max(
+		realized_pnl = normalize_money(realized_pnl)
 
-            self.state.peak_equity,
+		market_value = normalize_money(market_value)
 
-            equity
+		equity = normalize_money(
+			cash + market_value
+		)
 
-        )
+		peak = max(
 
-        return replace(
+			self.state.peak_equity,
 
-            self.state,
+			equity
 
-            cash=cash,
+		)
 
-            positions=positions,
+		return replace(
 
-            realized_pnl=realized_pnl,
+			self.state,
 
-            peak_equity=peak
+			cash=cash,
 
-        )
+			positions=positions,
 
-    # ========================================================
-    # RISK THRESHOLD MONITORING
-    # ========================================================
+			realized_pnl=realized_pnl,
 
-    def evaluate_risk_thresholds(self):
+			peak_equity=peak
 
-        self.require_session()
+		)
 
-        daily_breach = (
+	# ========================================================
+	# RISK THRESHOLD MONITORING
+	# ========================================================
 
-            self.state.daily_loss_percent
+	@isolated_accounting
+	def evaluate_risk_thresholds(self):
 
-            >= self.maximum_daily_loss_percent
+		self.require_session()
 
-        )
+		daily_breach = (
 
-        drawdown_breach = (
+			self.state.daily_loss_percent
 
-            self.state.drawdown_percent
+			>= self.maximum_daily_loss_percent
 
-            >= self.maximum_drawdown_percent
+		)
 
-        )
+		drawdown_breach = (
 
-        events = []
+			self.state.drawdown_percent
 
-        if (
-            daily_breach
-            and not self.state.daily_entry_halted
-        ):
+			>= self.maximum_drawdown_percent
 
-            events.append(
+		)
 
-                PortfolioRiskEvent(
+		events = []
 
-                    session=self.session,
+		if (
+			daily_breach
+			and not self.state.daily_entry_halted
+		):
 
-                    event_type="DAILY_LOSS",
+			events.append(
 
-                    reason="Daily loss threshold reached",
+				PortfolioRiskEvent(
 
-                    observed_value=(
-                        self.state.daily_loss_percent
-                    ),
+					session=self.session,
 
-                    threshold=(
-                        self.maximum_daily_loss_percent
-                    )
+					event_type="DAILY_LOSS",
 
-                )
+					reason="Daily loss threshold reached",
 
-            )
+					observed_value=(
+						self.state.daily_loss_percent
+					),
 
-        if (
-            drawdown_breach
-            and not self.state.trading_halted
-        ):
+					threshold=(
+						self.maximum_daily_loss_percent
+					)
 
-            events.append(
+				)
 
-                PortfolioRiskEvent(
+			)
 
-                    session=self.session,
+		if (
+			drawdown_breach
+			and not self.state.trading_halted
+		):
 
-                    event_type="MAXIMUM_DRAWDOWN",
+			events.append(
 
-                    reason="Maximum drawdown reached",
+				PortfolioRiskEvent(
 
-                    observed_value=(
-                        self.state.drawdown_percent
-                    ),
+					session=self.session,
 
-                    threshold=(
-                        self.maximum_drawdown_percent
-                    )
+					event_type="MAXIMUM_DRAWDOWN",
 
-                )
+					reason="Maximum drawdown reached",
 
-            )
+					observed_value=(
+						self.state.drawdown_percent
+					),
 
-        self._state = replace(
+					threshold=(
+						self.maximum_drawdown_percent
+					)
 
-            self.state,
+				)
 
-            daily_entry_halted=(
+			)
 
-                self.state.daily_entry_halted
+		self._state = replace(
 
-                or daily_breach
+			self.state,
 
-            ),
+			daily_entry_halted=(
 
-            trading_halted=(
+				self.state.daily_entry_halted
 
-                self.state.trading_halted
+				or daily_breach
 
-                or drawdown_breach
+			),
 
-            )
+			trading_halted=(
 
-        )
+				self.state.trading_halted
 
-        self._risk_events.extend(events)
+				or drawdown_breach
 
-        return tuple(events)
+			)
 
-    # ========================================================
-    # ENTRY ALLOCATION
-    # ========================================================
+		)
 
-    @staticmethod
-    def reject(reason):
+		self._risk_events.extend(events)
 
-        return CapitalAllocation(
+		return tuple(events)
 
-            approved=False,
+	# ========================================================
+	# ENTRY ALLOCATION
+	# ========================================================
 
-            reason=reason
+	@staticmethod
+	@isolated_accounting
+	def reject(reason):
 
-        )
+		return CapitalAllocation(
 
-    def calculate_allocation(
-        self,
-        opportunity,
-        market_price
-    ):
+			approved=False,
 
-        self.require_session()
+			reason=reason
 
-        self._config.validate()
+		)
 
-        if not isinstance(
-            opportunity,
-            PortfolioOpportunity
-        ):
+	@isolated_accounting
+	def calculate_allocation(
+		self,
+		opportunity,
+		market_price
+	):
 
-            raise ValueError(
-                "Invalid portfolio opportunity."
-            )
+		self.require_session()
 
-        market_price = positive_decimal(
+		self._config.validate()
 
-            market_price,
+		if not isinstance(
+			opportunity,
+			PortfolioOpportunity
+		):
 
-            "market_price"
+			raise ValueError(
+				"Invalid portfolio opportunity."
+			)
 
-        )
+		market_price = normalize_price(
+			positive_decimal(
+				market_price,
+				"market_price",
+			)
+		)
 
-        if opportunity.signal_date >= self.session:
+		if opportunity.signal_date >= self.session:
 
-            return self.reject(
-                "Signal must precede execution session."
-            )
+			return self.reject(
+				"Signal must precede execution session."
+			)
 
-        if opportunity.symbol not in self.symbols:
+		if opportunity.symbol not in self.symbols:
 
-            return self.reject(
-                "Symbol is outside trading universe."
-            )
+			return self.reject(
+				"Symbol is outside trading universe."
+			)
 
-        if opportunity.strategy not in (
-            self.enabled_strategies
-        ):
+		if opportunity.strategy not in (
+			self.enabled_strategies
+		):
 
-            return self.reject(
-                "Strategy is disabled."
-            )
+			return self.reject(
+				"Strategy is disabled."
+			)
 
-        if opportunity.score < self.minimum_score:
+		if opportunity.score < self.minimum_score:
 
-            return self.reject(
-                "Minimum opportunity score not reached."
-            )
+			return self.reject(
+				"Minimum opportunity score not reached."
+			)
 
-        if (
-            opportunity.stop_atr_multiplier
-            != self.stop_atr_multiplier
+		if (
+			opportunity.stop_atr_multiplier
+			!= self.stop_atr_multiplier
 
-            or opportunity.risk_reward_ratio
-            != self.risk_reward_ratio
-        ):
+			or opportunity.risk_reward_ratio
+			!= self.risk_reward_ratio
+		):
 
-            return self.reject(
-                "Opportunity strategy parameters mismatch."
-            )
+			return self.reject(
+				"Opportunity strategy parameters mismatch."
+			)
 
-        if self.state.trading_halted:
+		if self.state.trading_halted:
 
-            return self.reject(
-                "Portfolio trading is halted."
-            )
+			return self.reject(
+				"Portfolio trading is halted."
+			)
 
-        if self.state.daily_entry_halted:
+		if self.state.daily_entry_halted:
 
-            return self.reject(
-                "Daily entry halt is active."
-            )
+			return self.reject(
+				"Daily entry halt is active."
+			)
 
-        if (
-            opportunity.symbol
-            in self.state.existing_symbols
-        ):
+		if (
+			opportunity.symbol
+			in self.state.existing_symbols
+		):
 
-            return self.reject(
-                "Position already exists."
-            )
+			return self.reject(
+				"Position already exists."
+			)
 
-        if opportunity.symbol in self._closed_symbols:
+		if opportunity.symbol in self._closed_symbols:
 
-            return self.reject(
-                "Same-session reentry is prohibited."
-            )
+			return self.reject(
+				"Same-session reentry is prohibited."
+			)
 
-        if (
-            self.state.open_positions
-            >= self.maximum_positions
-        ):
+		if (
+			self.state.open_positions
+			>= self.maximum_positions
+		):
 
-            return self.reject(
-                "Maximum open positions reached."
-            )
+			return self.reject(
+				"Maximum open positions reached."
+			)
 
-        if (
-            self._session_entries
-            >= self.maximum_new_positions
-        ):
+		if (
+			self._session_entries
+			>= self.maximum_new_positions
+		):
 
-            return self.reject(
-                "Session entry limit reached."
-            )
+			return self.reject(
+				"Session entry limit reached."
+			)
 
-        entry_price = (
+		entry_price = calculate_buy_price(
+			market_price,
+			self.slippage,
+		)
 
-            market_price * (D("1") + self.slippage)
+		try:
 
-        )
+			stop_price, target_price = (
+				opportunity.prices_for_entry(
+					entry_price
+				)
+			)
 
-        try:
+		except ValueError as error:
 
-            stop_price, target_price = (
-                opportunity.prices_for_entry(
-                    entry_price
-                )
-            )
+			return self.reject(str(error))
 
-        except ValueError as error:
+		cost_per_share = (
 
-            return self.reject(str(error))
+			entry_price * (D("1") + self.fee_rate)
 
-        cost_per_share = (
+		)
 
-            entry_price * (D("1") + self.fee_rate)
+		stop_fill = calculate_sell_price(
+			stop_price,
+			self.slippage,
+		)
 
-        )
+		stop_proceeds = (
 
-        stop_fill = (
+			stop_fill * (D("1") - self.fee_rate)
 
-            stop_price * (D("1") - self.slippage)
+		)
 
-        )
+		risk_per_share = (
 
-        stop_proceeds = (
+			cost_per_share - stop_proceeds
 
-            stop_fill * (D("1") - self.fee_rate)
+		)
 
-        )
+		risk_budget = min(
 
-        risk_per_share = (
+			self.maximum_trade_risk,
 
-            cost_per_share - stop_proceeds
+			self.remaining_open_risk,
 
-        )
+			self.remaining_daily_risk,
 
-        risk_budget = min(
+			self.remaining_drawdown_risk
 
-            self.maximum_trade_risk,
+		)
 
-            self.remaining_open_risk,
+		if risk_budget <= ZERO:
 
-            self.remaining_daily_risk,
+			return self.reject(
+				"No remaining planned risk budget."
+			)
 
-            self.remaining_drawdown_risk
+		if self.remaining_exposure <= ZERO:
 
-        )
+			return self.reject(
+				"Maximum exposure reached."
+			)
 
-        if risk_budget <= ZERO:
+		if self.state.cash < self.minimum_order_value:
 
-            return self.reject(
-                "No remaining planned risk budget."
-            )
+			return self.reject(
+				"Insufficient available cash."
+			)
 
-        if self.remaining_exposure <= ZERO:
+		quantity = min(
 
-            return self.reject(
-                "Maximum exposure reached."
-            )
+			risk_budget / risk_per_share,
 
-        if self.state.cash < self.minimum_order_value:
+			self.maximum_position_value / entry_price,
 
-            return self.reject(
-                "Insufficient available cash."
-            )
+			self.remaining_exposure / entry_price,
 
-        quantity = min(
+			self.state.cash / cost_per_share
 
-            risk_budget / risk_per_share,
+		).quantize(
 
-            self.maximum_position_value / entry_price,
+			self.quantity_step,
 
-            self.remaining_exposure / entry_price,
+			rounding=ROUND_DOWN
 
-            self.state.cash / cost_per_share
+		)
 
-        ).quantize(
+		if quantity <= ZERO:
 
-            self.quantity_step,
+			return self.reject(
+				"Calculated quantity is zero."
+			)
 
-            rounding=ROUND_DOWN
+				# Entry fees and execution slippage immediately
+		# reduce equity. Recalculate allocation ceilings
+		# using the corrected post-entry capital.
 
-        )
+		while quantity > ZERO:
 
-        if quantity <= ZERO:
+			position_value = calculate_notional(
+				quantity,
+				entry_price,
+			)
 
-            return self.reject(
-                "Calculated quantity is zero."
-            )
+			entry_fee = calculate_fee(
+				position_value,
+				self.fee_rate,
+			)
 
-        # Entry fees immediately reduce equity. Recalculate
-        # allocation ceilings using the post-entry capital.
+			entry_cost = calculate_entry_cost(
+				quantity,
+				entry_price,
+				self.fee_rate,
+			)
 
-        while quantity > ZERO:
+			planned_risk = calculate_planned_risk(
+				quantity,
+				entry_price,
+				stop_price,
+				self.slippage,
+				self.fee_rate,
+			)
 
-            position_value = quantity * entry_price
+			entry_market_value = calculate_notional(
+				quantity,
+				market_price,
+			)
 
-            entry_fee = position_value * self.fee_rate
+			post_equity = normalize_money(
+				self.state.equity
+				- entry_cost
+				+ entry_market_value
+			)
 
-            entry_cost = position_value + entry_fee
+			post_capital = min(
+				post_equity,
+				self.initial_capital
+			)
 
-            planned_risk = quantity * risk_per_share
+			position_limit = (
 
-            post_equity = self.state.equity - entry_fee
+				post_capital
 
-            post_capital = min(
+				* self.maximum_position_percent
 
-                post_equity,
+				/ HUNDRED
 
-                self.initial_capital
+			)
 
-            )
+			exposure_limit = (
 
-            position_limit = (
+				post_capital
 
-                post_capital
+				* self.maximum_exposure_percent
 
-                * self.maximum_position_percent
+				/ HUNDRED
 
-                / HUNDRED
+			)
 
-            )
+			trade_risk_limit = (
 
-            exposure_limit = (
+				post_capital
 
-                post_capital
+				* self.risk_per_trade_percent
 
-                * self.maximum_exposure_percent
+				/ HUNDRED
 
-                / HUNDRED
+			)
 
-            )
+			aggregate_risk_limit = (
 
-            trade_risk_limit = (
+				post_capital
 
-                post_capital
+				* self.maximum_open_risk_percent
 
-                * self.risk_per_trade_percent
+				/ HUNDRED
 
-                / HUNDRED
+			)
 
-            )
+			if (
 
-            aggregate_risk_limit = (
+				entry_cost <= self.state.cash
 
-                post_capital
+				and position_value <= position_limit
 
-                * self.maximum_open_risk_percent
+				and (
+					self.state.total_exposure
+					+ position_value
+					<= exposure_limit
+				)
 
-                / HUNDRED
+				and planned_risk > ZERO
 
-            )
+				and planned_risk <= trade_risk_limit
 
-            if (
+				and (
+					self.state.aggregate_open_risk
+					+ planned_risk
+					<= aggregate_risk_limit
+				)
 
-                entry_cost <= self.state.cash
+				and planned_risk <= risk_budget
 
-                and position_value <= position_limit
+			):
 
-                and (
-                    self.state.total_exposure
-                    + position_value
-                    <= exposure_limit
-                )
+				break
 
-                and planned_risk <= trade_risk_limit
+			reduced = min(
 
-                and (
-                    self.state.aggregate_open_risk
-                    + planned_risk
-                    <= aggregate_risk_limit
-                )
+				quantity - self.quantity_step,
 
-                and planned_risk <= risk_budget
+				position_limit / entry_price,
 
-            ):
+				max(
+					ZERO,
+					exposure_limit
+					- self.state.total_exposure
+				) / entry_price,
 
-                break
+				trade_risk_limit / risk_per_share,
 
-            reduced = min(
+				max(
+					ZERO,
+					aggregate_risk_limit
+					- self.state.aggregate_open_risk
+				) / risk_per_share
 
-                quantity - self.quantity_step,
+			)
 
-                position_limit / entry_price,
+			quantity = reduced.quantize(
 
-                max(
-                    ZERO,
-                    exposure_limit
-                    - self.state.total_exposure
-                ) / entry_price,
+				self.quantity_step,
 
-                trade_risk_limit / risk_per_share,
+				rounding=ROUND_DOWN
 
-                max(
-                    ZERO,
-                    aggregate_risk_limit
-                    - self.state.aggregate_open_risk
-                ) / risk_per_share
+			)
 
-            )
+		if quantity <= ZERO:
 
-            quantity = reduced.quantize(
+			return self.reject(
+				"No affordable quantity within risk limits."
+			)
 
-                self.quantity_step,
+		if position_value < self.minimum_order_value:
 
-                rounding=ROUND_DOWN
+			return self.reject(
+				"Position value below minimum order value."
+			)
 
-            )
+		return CapitalAllocation(
 
-        if quantity <= ZERO:
+			approved=True,
 
-            return self.reject(
-                "No affordable quantity within risk limits."
-            )
+			reason="Capital allocation approved",
 
-        if position_value < self.minimum_order_value:
+			quantity=quantity,
 
-            return self.reject(
-                "Position value below minimum order value."
-            )
+			entry_price=entry_price,
 
-        return CapitalAllocation(
+			stop_price=stop_price,
 
-            approved=True,
+			target_price=target_price,
 
-            reason="Capital allocation approved",
+			entry_fee=entry_fee,
 
-            quantity=quantity,
+			position_value=position_value,
 
-            entry_price=entry_price,
+			entry_cost=entry_cost,
 
-            stop_price=stop_price,
+			planned_risk=planned_risk
 
-            target_price=target_price,
+		)
 
-            entry_fee=entry_fee,
+	# ========================================================
+	# SIMULATED POSITION ENTRY
+	# ========================================================
 
-            position_value=position_value,
+	@isolated_accounting
+	def open_position(
+		self,
+		opportunity,
+		market_price
+	):
 
-            entry_cost=entry_cost,
+		allocation = self.calculate_allocation(
 
-            planned_risk=planned_risk
+			opportunity,
 
-        )
+			market_price
 
-    # ========================================================
-    # SIMULATED POSITION ENTRY
-    # ========================================================
+		)
 
-    def open_position(
-        self,
-        opportunity,
-        market_price
-    ):
+		if not allocation.approved:
 
-        allocation = self.calculate_allocation(
+			return PortfolioExecutionResult(
 
-            opportunity,
+				executed=False,
 
-            market_price
+				symbol=opportunity.symbol,
 
-        )
+				reason=allocation.reason
 
-        if not allocation.approved:
+			)
 
-            return PortfolioExecutionResult(
+		position = PortfolioPosition(
 
-                executed=False,
+			symbol=opportunity.symbol,
 
-                symbol=opportunity.symbol,
+			strategy=opportunity.strategy,
 
-                reason=allocation.reason
+			entry_date=self.session,
 
-            )
+			quantity=allocation.quantity,
 
-        position = PortfolioPosition(
+			entry_price=allocation.entry_price,
 
-            symbol=opportunity.symbol,
+			stop_price=allocation.stop_price,
 
-            strategy=opportunity.strategy,
+			target_price=allocation.target_price,
 
-            entry_date=self.session,
+			current_price=normalize_price(
+				positive_decimal(
+					market_price,
+					"market_price",
+				)
+			),
 
-            quantity=allocation.quantity,
+			planned_risk=allocation.planned_risk,
 
-            entry_price=allocation.entry_price,
+			entry_fee=allocation.entry_fee
 
-            stop_price=allocation.stop_price,
+		)
 
-            target_price=allocation.target_price,
+		updated = self.build_state(
 
-            current_price=allocation.entry_price,
+			cash=normalize_money(
+				self.state.cash - position.entry_cost
+			),
 
-            planned_risk=allocation.planned_risk,
+			positions=self.state.positions + (position,),
 
-            entry_fee=allocation.entry_fee
+			realized_pnl=self.state.realized_pnl
 
-        )
+		)
 
-        updated = self.build_state(
+		self._state = updated
 
-            cash=self.state.cash - position.entry_cost,
+		self._session_entries += 1
 
-            positions=self.state.positions + (position,),
+		self.evaluate_risk_thresholds()
 
-            realized_pnl=self.state.realized_pnl
+		return PortfolioExecutionResult(
 
-        )
+			executed=True,
 
-        self._state = updated
+			symbol=position.symbol,
 
-        self._session_entries += 1
+			reason="Historical entry executed",
 
-        self.evaluate_risk_thresholds()
+			position=position
 
-        return PortfolioExecutionResult(
+		)
 
-            executed=True,
+	# ========================================================
+	# MARK OPEN POSITIONS TO MARKET
+	# ========================================================
 
-            symbol=position.symbol,
+	@isolated_accounting
+	def mark_to_market(self, prices):
 
-            reason="Historical entry executed",
+		self.require_session()
 
-            position=position
+		if not isinstance(prices, Mapping):
 
-        )
+			raise ValueError(
+				"Market prices must be a mapping."
+			)
 
-    # ========================================================
-    # MARK OPEN POSITIONS TO MARKET
-    # ========================================================
+		updated_positions = []
 
-    def mark_to_market(self, prices):
+		for position in self.state.positions:
 
-        self.require_session()
+			if position.symbol not in prices:
 
-        if not isinstance(prices, Mapping):
+				raise ValueError(
 
-            raise ValueError(
-                "Market prices must be a mapping."
-            )
+					f"Missing market price: "
+					f"{position.symbol}"
 
-        updated_positions = []
+				)
 
-        for position in self.state.positions:
+			price = positive_decimal(
 
-            if position.symbol not in prices:
+				prices[position.symbol],
 
-                raise ValueError(
+				f"{position.symbol} market price"
 
-                    f"Missing market price: "
-                    f"{position.symbol}"
+			)
 
-                )
+			updated_positions.append(
 
-            price = positive_decimal(
+				replace(
 
-                prices[position.symbol],
+					position,
 
-                f"{position.symbol} market price"
+					current_price=price
 
-            )
+				)
 
-            updated_positions.append(
+			)
 
-                replace(
+		updated = self.build_state(
 
-                    position,
+			cash=self.state.cash,
 
-                    current_price=price
+			positions=updated_positions,
 
-                )
+			realized_pnl=self.state.realized_pnl
 
-            )
+		)
 
-        updated = self.build_state(
+		self._state = updated
 
-            cash=self.state.cash,
+		self.evaluate_risk_thresholds()
 
-            positions=updated_positions,
+		return self.state
 
-            realized_pnl=self.state.realized_pnl
+	# ========================================================
+	# SIMULATED POSITION EXIT
+	# ========================================================
 
-        )
+	@isolated_accounting
+	def close_position(
+		self,
+		symbol,
+		market_price,
+		reason
+	):
 
-        self._state = updated
+		self.require_session()
 
-        self.evaluate_risk_thresholds()
+		market_price = normalize_price(
+			positive_decimal(
+				market_price,
+				"market_price",
+			)
+		)
 
-        return self.state
+		position = next(
 
-    # ========================================================
-    # SIMULATED POSITION EXIT
-    # ========================================================
+			(
 
-    def close_position(
-        self,
-        symbol,
-        market_price,
-        reason
-    ):
+				position
 
-        self.require_session()
+				for position in self.state.positions
 
-        market_price = positive_decimal(
+				if position.symbol == symbol
 
-            market_price,
+			),
 
-            "market_price"
+			None
 
-        )
+		)
 
-        position = next(
+		if position is None:
 
-            (
+			return PortfolioExecutionResult(
 
-                position
+				executed=False,
 
-                for position in self.state.positions
+				symbol=symbol,
 
-                if position.symbol == symbol
+				reason="No open position found"
 
-            ),
+			)
 
-            None
+		exit_price = calculate_sell_price(
+			market_price,
+			self.slippage,
+		)
 
-        )
+		exit_notional = calculate_notional(
+			position.quantity,
+			exit_price,
+		)
 
-        if position is None:
+		exit_fee = calculate_fee(
+			exit_notional,
+			self.fee_rate,
+		)
 
-            return PortfolioExecutionResult(
+		trade = PortfolioTrade(
 
-                executed=False,
+			symbol=position.symbol,
 
-                symbol=symbol,
+			strategy=position.strategy,
 
-                reason="No open position found"
+			entry_date=position.entry_date,
 
-            )
+			exit_date=self.session,
 
-        exit_price = (
+			quantity=position.quantity,
 
-            market_price * (D("1") - self.slippage)
+			entry_price=position.entry_price,
 
-        )
+			exit_price=exit_price,
 
-        exit_fee = (
+			stop_price=position.stop_price,
 
-            position.quantity
+			target_price=position.target_price,
 
-            * exit_price
+			planned_risk=position.planned_risk,
 
-            * self.fee_rate
+			exit_reason=reason,
 
-        )
+			entry_fee=position.entry_fee,
 
-        trade = PortfolioTrade(
+			exit_fee=exit_fee,
 
-            symbol=position.symbol,
+			holding_sessions=position.holding_sessions
 
-            strategy=position.strategy,
+		)
 
-            entry_date=position.entry_date,
+		remaining_positions = tuple(
 
-            exit_date=self.session,
+			item
 
-            quantity=position.quantity,
+			for item in self.state.positions
 
-            entry_price=position.entry_price,
+			if item.symbol != symbol
 
-            exit_price=exit_price,
+		)
 
-            stop_price=position.stop_price,
+		updated = self.build_state(
 
-            target_price=position.target_price,
+			cash=normalize_money(
+				self.state.cash + trade.exit_proceeds
+			),
 
-            planned_risk=position.planned_risk,
+			positions=remaining_positions,
 
-            exit_reason=reason,
+			realized_pnl=normalize_money(
+				self.state.realized_pnl + trade.pnl
+			)
 
-            entry_fee=position.entry_fee,
+		)
 
-            exit_fee=exit_fee,
+		self._state = updated
 
-            holding_sessions=position.holding_sessions
+		self._trades.append(trade)
 
-        )
+		self._closed_symbols.add(symbol)
 
-        remaining_positions = tuple(
+		if trade.risk_breached:
 
-            item
+			self._risk_events.append(
 
-            for item in self.state.positions
+				PortfolioRiskEvent(
 
-            if item.symbol != symbol
+					session=self.session,
 
-        )
+					event_type="PLANNED_RISK_BREACH",
 
-        updated = self.build_state(
+					reason=(
+						"Actual loss exceeded planned risk"
+					),
 
-            cash=self.state.cash + trade.exit_proceeds,
+					observed_value=trade.actual_loss,
 
-            positions=remaining_positions,
+					threshold=trade.planned_risk,
 
-            realized_pnl=(
-                self.state.realized_pnl + trade.pnl
-            )
+					symbol=symbol
 
-        )
+				)
 
-        self._state = updated
+			)
 
-        self._trades.append(trade)
+		self.evaluate_risk_thresholds()
 
-        self._closed_symbols.add(symbol)
+		return PortfolioExecutionResult(
 
-        if trade.risk_breached:
+			executed=True,
 
-            self._risk_events.append(
+			symbol=symbol,
 
-                PortfolioRiskEvent(
+			reason="Historical exit executed",
 
-                    session=self.session,
+			trade=trade
 
-                    event_type="PLANNED_RISK_BREACH",
+		)
 
-                    reason=(
-                        "Actual loss exceeded planned risk"
-                    ),
+	# ========================================================
+	# ACCOUNT SUMMARY
+	# ========================================================
 
-                    observed_value=trade.actual_loss,
+	@isolated_accounting
+	def display_summary(self):
 
-                    threshold=trade.planned_risk,
+		account = self.state
 
-                    symbol=symbol
+		print("=" * 70)
 
-                )
+		print("JARVIS SHARED CAPITAL MANAGER")
 
-            )
+		print("VERSION 0.8.6.7.2C.4B")
 
-        self.evaluate_risk_thresholds()
+		print("=" * 70)
 
-        return PortfolioExecutionResult(
+		print(f"Session: {self.session}")
 
-            executed=True,
+		print(f"Initial capital: ${account.initial_capital:.2f}")
 
-            symbol=symbol,
+		print(f"Cash: ${account.cash:.6f}")
 
-            reason="Historical exit executed",
+		print(f"Market value: ${account.market_value:.6f}")
 
-            trade=trade
+		print(f"Equity: ${account.equity:.6f}")
 
-        )
+		print(f"Realized P&L: ${account.realized_pnl:.6f}")
 
-    # ========================================================
-    # ACCOUNT SUMMARY
-    # ========================================================
+		print(f"Unrealized P&L: ${account.unrealized_pnl:.6f}")
 
-    def display_summary(self):
+		print(f"Open positions: {account.open_positions}")
 
-        account = self.state
+		print(f"Exposure: {account.exposure_percent:.4f}%")
 
-        print("=" * 70)
+		print(f"Aggregate risk: ${account.aggregate_open_risk:.6f}")
 
-        print("JARVIS SHARED CAPITAL MANAGER")
+		print(f"Remaining exposure: ${self.remaining_exposure:.6f}")
 
-        print("VERSION 0.8.6.4")
+		print(f"Remaining open risk: ${self.remaining_open_risk:.6f}")
 
-        print("=" * 70)
+		print(f"Daily loss: {account.daily_loss_percent:.4f}%")
 
-        print(f"Session: {self.session}")
+		print(f"Drawdown: {account.drawdown_percent:.4f}%")
 
-        print(f"Initial capital: ${account.initial_capital:.2f}")
+		print(f"Completed trades: {len(self.trades)}")
 
-        print(f"Cash: ${account.cash:.6f}")
+		print(f"Risk events: {len(self.risk_events)}")
 
-        print(f"Market value: ${account.market_value:.6f}")
+		print(f"Daily entry halt: {account.daily_entry_halted}")
 
-        print(f"Equity: ${account.equity:.6f}")
+		print(f"Trading halted: {account.trading_halted}")
 
-        print(f"Realized P&L: ${account.realized_pnl:.6f}")
+		print()
 
-        print(f"Unrealized P&L: ${account.unrealized_pnl:.6f}")
+		print("Historical simulation only")
 
-        print(f"Open positions: {account.open_positions}")
+		print("Broker orders: DISABLED")
 
-        print(f"Exposure: {account.exposure_percent:.4f}%")
-
-        print(f"Aggregate risk: ${account.aggregate_open_risk:.6f}")
-
-        print(f"Remaining exposure: ${self.remaining_exposure:.6f}")
-
-        print(f"Remaining open risk: ${self.remaining_open_risk:.6f}")
-
-        print(f"Daily loss: {account.daily_loss_percent:.4f}%")
-
-        print(f"Drawdown: {account.drawdown_percent:.4f}%")
-
-        print(f"Completed trades: {len(self.trades)}")
-
-        print(f"Risk events: {len(self.risk_events)}")
-
-        print(f"Daily entry halt: {account.daily_entry_halted}")
-
-        print(f"Trading halted: {account.trading_halted}")
-
-        print()
-
-        print("Historical simulation only")
-
-        print("Broker orders: DISABLED")
-
-        print("Live trading: DISABLED")
+		print("Live trading: DISABLED")
 
 
 if __name__ == "__main__":
 
-    manager = CapitalManager()
+	manager = CapitalManager()
 
-    manager.display_summary()
+	manager.display_summary()

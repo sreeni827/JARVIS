@@ -1,12 +1,22 @@
+import re
 from dataclasses import dataclass
 from datetime import date
-from decimal import Decimal, ROUND_DOWN
-import re
+from decimal import ROUND_DOWN, Decimal
 
 
-ZERO = Decimal("0")
-ONE = Decimal("1")
-HUNDRED = Decimal("100")
+from portfolio.decimal_utils import (
+    normalize_price,
+    normalize_money,
+    calculate_notional,
+    calculate_pnl,
+)
+
+from portfolio.accounting_context import isolated_accounting
+
+
+ZERO = Decimal(0)
+ONE = Decimal(1)
+HUNDRED = Decimal(100)
 
 QUANTITY_STEP = Decimal("0.000001")
 
@@ -16,204 +26,129 @@ QUANTITY_STEP = Decimal("0.000001")
 # ============================================================
 
 
+@isolated_accounting
 def to_decimal(value, name="value"):
 
     if isinstance(value, bool):
+        raise ValueError(f"{name} must be numeric.")
 
-        raise ValueError(
-            f"{name} must be numeric."
-        )
-
-    if not isinstance(
-        value,
-        (Decimal, int, float, str)
-    ):
-
-        raise ValueError(
-            f"{name} must be numeric."
-        )
+    if not isinstance(value, (Decimal, int, float, str)):
+        raise ValueError(f"{name} must be numeric.")
 
     try:
-
         result = Decimal(str(value))
 
     except Exception as error:
-
-        raise ValueError(
-            f"Invalid decimal: {name}"
-        ) from error
+        raise ValueError(f"Invalid decimal: {name}") from error
 
     if not result.is_finite():
-
-        raise ValueError(
-            f"{name} must be finite."
-        )
+        raise ValueError(f"{name} must be finite.")
 
     return result
 
 
+@isolated_accounting
 def positive_decimal(value, name):
 
     result = to_decimal(value, name)
 
     if result <= ZERO:
-
-        raise ValueError(
-            f"{name} must be greater than zero."
-        )
+        raise ValueError(f"{name} must be greater than zero.")
 
     return result
 
 
+@isolated_accounting
 def nonnegative_decimal(value, name):
 
     result = to_decimal(value, name)
 
     if result < ZERO:
-
-        raise ValueError(
-            f"{name} cannot be negative."
-        )
+        raise ValueError(f"{name} cannot be negative.")
 
     return result
 
 
+@isolated_accounting
 def validate_symbol(symbol):
 
     if not isinstance(symbol, str):
+        raise ValueError("Symbol must be a string.")
 
-        raise ValueError(
-            "Symbol must be a string."
-        )
-
-    if not re.fullmatch(
-        r"[A-Z][A-Z0-9.-]{0,9}",
-        symbol
-    ):
-
-        raise ValueError(
-            f"Invalid symbol: {symbol}"
-        )
+    if not re.fullmatch(r"[A-Z][A-Z0-9.-]{0,9}", symbol):
+        raise ValueError(f"Invalid symbol: {symbol}")
 
     return symbol
 
 
+@isolated_accounting
 def validate_text(value, name):
 
     if not isinstance(value, str):
-
-        raise ValueError(
-            f"{name} must be a string."
-        )
+        raise ValueError(f"{name} must be a string.")
 
     if not value.strip():
-
-        raise ValueError(
-            f"{name} cannot be empty."
-        )
+        raise ValueError(f"{name} cannot be empty.")
 
     return value
 
 
+@isolated_accounting
 def validate_session(value, name):
 
     if type(value) is not date:
-
-        raise ValueError(
-            f"{name} must be a date."
-        )
+        raise ValueError(f"{name} must be a date.")
 
     return value
 
 
+@isolated_accounting
 def validate_integer(value, name, minimum=0):
 
     if type(value) is not int:
-
-        raise ValueError(
-            f"{name} must be an integer."
-        )
+        raise ValueError(f"{name} must be an integer.")
 
     if value < minimum:
-
-        raise ValueError(
-            f"{name} must be at least {minimum}."
-        )
+        raise ValueError(f"{name} must be at least {minimum}.")
 
     return value
 
 
+@isolated_accounting
 def validate_quantity(value):
 
-    quantity = positive_decimal(
-        value,
-        "quantity"
-    )
+    quantity = positive_decimal(value, "quantity")
 
-    rounded = quantity.quantize(
-        QUANTITY_STEP,
-        rounding=ROUND_DOWN
-    )
+    rounded = quantity.quantize(QUANTITY_STEP, rounding=ROUND_DOWN)
 
     if quantity != rounded:
-
-        raise ValueError(
-            "Quantity exceeds six decimal places."
-        )
+        raise ValueError("Quantity exceeds six decimal places.")
 
     return quantity
 
 
+@isolated_accounting
 def validate_score(value):
 
-    score = nonnegative_decimal(
-        value,
-        "score"
-    )
+    score = nonnegative_decimal(value, "score")
 
     if score > HUNDRED:
-
-        raise ValueError(
-            "Score cannot exceed 100."
-        )
+        raise ValueError("Score cannot exceed 100.")
 
     return score
 
 
-def normalize_fields(
-    instance,
-    positive=(),
-    nonnegative=()
-):
+@isolated_accounting
+def normalize_fields(instance, positive=(), nonnegative=()):
 
     for name in positive:
-
         object.__setattr__(
-
-            instance,
-
-            name,
-
-            positive_decimal(
-                getattr(instance, name),
-                name
-            )
-
+            instance, name, positive_decimal(getattr(instance, name), name)
         )
 
     for name in nonnegative:
-
         object.__setattr__(
-
-            instance,
-
-            name,
-
-            nonnegative_decimal(
-                getattr(instance, name),
-                name
-            )
-
+            instance, name, nonnegative_decimal(getattr(instance, name), name)
         )
 
 
@@ -222,9 +157,82 @@ def normalize_fields(
 # ============================================================
 
 
+
+@isolated_accounting
+def normalize_price_fields(instance, names):
+
+    for name in names:
+
+        value = positive_decimal(
+            getattr(instance, name),
+            name,
+        )
+
+        object.__setattr__(
+            instance,
+            name,
+            normalize_price(value),
+        )
+
+
+@isolated_accounting
+def normalize_money_fields(
+    instance,
+    positive=(),
+    nonnegative=(),
+    signed=(),
+):
+
+    for name in positive:
+
+        value = positive_decimal(
+            getattr(instance, name),
+            name,
+        )
+
+        normalized = normalize_money(value)
+
+        if normalized <= ZERO:
+
+            raise ValueError(
+                f"{name} is below monetary precision."
+            )
+
+        object.__setattr__(
+            instance,
+            name,
+            normalized,
+        )
+
+    for name in nonnegative:
+
+        value = nonnegative_decimal(
+            getattr(instance, name),
+            name,
+        )
+
+        object.__setattr__(
+            instance,
+            name,
+            normalize_money(value),
+        )
+
+    for name in signed:
+
+        value = to_decimal(
+            getattr(instance, name),
+            name,
+        )
+
+        object.__setattr__(
+            instance,
+            name,
+            normalize_money(value),
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class PortfolioPosition:
-
     symbol: str
 
     strategy: str
@@ -247,116 +255,86 @@ class PortfolioPosition:
 
     holding_sessions: int = 1
 
+    @isolated_accounting
     def __post_init__(self):
 
         validate_symbol(self.symbol)
 
-        validate_text(
-            self.strategy,
-            "strategy"
-        )
+        validate_text(self.strategy, "strategy")
 
-        validate_session(
-            self.entry_date,
-            "entry_date"
-        )
+        validate_session(self.entry_date, "entry_date")
 
-        object.__setattr__(
-            self,
-            "quantity",
-            validate_quantity(self.quantity)
-        )
+        object.__setattr__(self, "quantity", validate_quantity(self.quantity))
 
         normalize_fields(
-
             self,
-
             positive=(
-
                 "entry_price",
                 "stop_price",
                 "target_price",
                 "current_price",
-                "planned_risk"
-
+                "planned_risk",
             ),
-
-            nonnegative=("entry_fee",)
-
+            nonnegative=("entry_fee",),
         )
 
-        if not (
-            self.stop_price
-            < self.entry_price
-            < self.target_price
-        ):
-
-            raise ValueError(
-                "Long position requires stop < entry < target."
-            )
-
-        validate_integer(
-
-            self.holding_sessions,
-
-            "holding_sessions",
-
-            minimum=1
-
+        normalize_price_fields(
+            self,
+            (
+                "entry_price",
+                "stop_price",
+                "target_price",
+                "current_price",
+            ),
         )
+
+        normalize_money_fields(
+            self,
+            positive=("planned_risk",),
+            nonnegative=("entry_fee",),
+        )
+
+        if not (self.stop_price < self.entry_price < self.target_price):
+            raise ValueError("Long position requires stop < entry < target.")
+
+        validate_integer(self.holding_sessions, "holding_sessions", minimum=1)
 
     @property
+    @isolated_accounting
     def entry_notional(self):
 
-        return (
-            self.quantity
-            * self.entry_price
-        )
+        return calculate_notional(self.quantity, self.entry_price)
 
     @property
+    @isolated_accounting
     def entry_cost(self):
 
-        return (
-            self.entry_notional
-            + self.entry_fee
-        )
+        return normalize_money(self.entry_notional + self.entry_fee)
 
     @property
+    @isolated_accounting
     def market_value(self):
 
-        return (
-            self.quantity
-            * self.current_price
-        )
+        return calculate_notional(self.quantity, self.current_price)
 
     @property
+    @isolated_accounting
     def unrealized_pnl(self):
 
-        return (
-            self.market_value
-            - self.entry_cost
-        )
+        return calculate_pnl(self.entry_cost, self.market_value)
 
     @property
+    @isolated_accounting
     def unrealized_return_percent(self):
 
-        return (
-            self.unrealized_pnl
-            / self.entry_cost
-            * HUNDRED
-        )
+        return self.unrealized_pnl / self.entry_cost * HUNDRED
 
     @property
+    @isolated_accounting
     def risk_reward_ratio(self):
 
-        return (
-
-            (self.target_price - self.entry_price)
-
-            /
-
-            (self.entry_price - self.stop_price)
-
+        return (self.target_price - self.entry_price) / (
+            self.entry_price - self.stop_price
         )
 
 
@@ -367,7 +345,6 @@ class PortfolioPosition:
 
 @dataclass(frozen=True, slots=True)
 class PortfolioTrade:
-
     symbol: str
 
     strategy: str
@@ -396,154 +373,119 @@ class PortfolioTrade:
 
     holding_sessions: int = 1
 
+    @isolated_accounting
     def __post_init__(self):
 
         validate_symbol(self.symbol)
 
-        validate_text(
-            self.strategy,
-            "strategy"
-        )
+        validate_text(self.strategy, "strategy")
 
-        validate_text(
-            self.exit_reason,
-            "exit_reason"
-        )
+        validate_text(self.exit_reason, "exit_reason")
 
-        validate_session(
-            self.entry_date,
-            "entry_date"
-        )
+        validate_session(self.entry_date, "entry_date")
 
-        validate_session(
-            self.exit_date,
-            "exit_date"
-        )
+        validate_session(self.exit_date, "exit_date")
 
         if self.exit_date < self.entry_date:
+            raise ValueError("Exit date cannot precede entry date.")
 
-            raise ValueError(
-                "Exit date cannot precede entry date."
-            )
-
-        object.__setattr__(
-
-            self,
-
-            "quantity",
-
-            validate_quantity(self.quantity)
-
-        )
+        object.__setattr__(self, "quantity", validate_quantity(self.quantity))
 
         normalize_fields(
-
             self,
-
             positive=(
-
                 "entry_price",
                 "exit_price",
                 "stop_price",
                 "target_price",
-                "planned_risk"
-
+                "planned_risk",
             ),
-
-            nonnegative=(
-
-                "entry_fee",
-                "exit_fee"
-
-            )
-
+            nonnegative=("entry_fee", "exit_fee"),
         )
 
-        if not (
-            self.stop_price
-            < self.entry_price
-            < self.target_price
-        ):
+        normalize_price_fields(
+            self,
+            (
+                "entry_price",
+                "exit_price",
+                "stop_price",
+                "target_price",
+            ),
+        )
 
-            raise ValueError(
-                "Invalid long trade price structure."
-            )
+        normalize_money_fields(
+            self,
+            positive=("planned_risk",),
+            nonnegative=("entry_fee", "exit_fee"),
+        )
+
+        if not (self.stop_price < self.entry_price < self.target_price):
+            raise ValueError("Invalid long trade price structure.")
 
         if self.exit_fee > self.exit_notional:
+            raise ValueError("Exit fee exceeds sale proceeds.")
 
-            raise ValueError(
-                "Exit fee exceeds sale proceeds."
-            )
-
-        validate_integer(
-
-            self.holding_sessions,
-
-            "holding_sessions",
-
-            minimum=1
-
-        )
+        validate_integer(self.holding_sessions, "holding_sessions", minimum=1)
 
     @property
+    @isolated_accounting
     def entry_notional(self):
 
-        return self.quantity * self.entry_price
+        return calculate_notional(self.quantity, self.entry_price)
 
     @property
+    @isolated_accounting
     def exit_notional(self):
 
-        return self.quantity * self.exit_price
+        return calculate_notional(self.quantity, self.exit_price)
 
     @property
+    @isolated_accounting
     def entry_cost(self):
 
-        return self.entry_notional + self.entry_fee
+        return normalize_money(self.entry_notional + self.entry_fee)
 
     @property
+    @isolated_accounting
     def exit_proceeds(self):
 
-        return self.exit_notional - self.exit_fee
+        return normalize_money(self.exit_notional - self.exit_fee)
 
     @property
+    @isolated_accounting
     def total_fees(self):
 
-        return self.entry_fee + self.exit_fee
+        return normalize_money(self.entry_fee + self.exit_fee)
 
     @property
+    @isolated_accounting
     def pnl(self):
 
-        return self.exit_proceeds - self.entry_cost
+        return calculate_pnl(self.entry_cost, self.exit_proceeds)
 
     @property
+    @isolated_accounting
     def return_percent(self):
 
-        return (
-            self.pnl
-            / self.entry_cost
-            * HUNDRED
-        )
+        return self.pnl / self.entry_cost * HUNDRED
 
     @property
+    @isolated_accounting
     def actual_loss(self):
 
-        return max(
-            ZERO,
-            -self.pnl
-        )
+        return max(ZERO, -self.pnl)
 
     @property
+    @isolated_accounting
     def risk_multiple(self):
 
         return self.pnl / self.planned_risk
 
     @property
+    @isolated_accounting
     def risk_breached(self):
 
-        return (
-            self.actual_loss
-            > self.planned_risk
-        )
+        return self.actual_loss > self.planned_risk
 
 
 # ============================================================
@@ -553,7 +495,6 @@ class PortfolioTrade:
 
 @dataclass(frozen=True, slots=True)
 class PortfolioAccountState:
-
     initial_capital: Decimal
 
     cash: Decimal
@@ -570,255 +511,141 @@ class PortfolioAccountState:
 
     daily_entry_halted: bool = False
 
+    @isolated_accounting
     def __post_init__(self):
 
         normalize_fields(
-
             self,
-
-            positive=(
-
-                "initial_capital",
-                "day_start_equity",
-                "peak_equity"
-
-            ),
-
-            nonnegative=("cash",)
-
+            positive=("initial_capital", "day_start_equity", "peak_equity"),
+            nonnegative=("cash",),
         )
 
         object.__setattr__(
-
-            self,
-
-            "realized_pnl",
-
-            to_decimal(
-                self.realized_pnl,
-                "realized_pnl"
-            )
-
+            self, "realized_pnl", to_decimal(self.realized_pnl, "realized_pnl")
         )
 
-        if not isinstance(
-            self.positions,
-            (tuple, list)
-        ):
+        normalize_money_fields(
+            self,
+            positive=(
+                "initial_capital",
+                "day_start_equity",
+                "peak_equity",
+            ),
+            nonnegative=("cash",),
+            signed=("realized_pnl",),
+        )
 
-            raise ValueError(
-                "Positions must be a tuple or list."
-            )
+        if not isinstance(self.positions, (tuple, list)):
+            raise ValueError("Positions must be a tuple or list.")
 
         positions = tuple(self.positions)
 
         for position in positions:
+            if not isinstance(position, PortfolioPosition):
+                raise ValueError("Invalid portfolio position.")
 
-            if not isinstance(
-                position,
-                PortfolioPosition
-            ):
-
-                raise ValueError(
-                    "Invalid portfolio position."
-                )
-
-        symbols = [
-            position.symbol
-            for position in positions
-        ]
+        symbols = [position.symbol for position in positions]
 
         if len(symbols) != len(set(symbols)):
+            raise ValueError("Duplicate portfolio positions.")
 
-            raise ValueError(
-                "Duplicate portfolio positions."
-            )
-
-        object.__setattr__(
-            self,
-            "positions",
-            positions
-        )
+        object.__setattr__(self, "positions", positions)
 
         if self.peak_equity < self.equity:
-
-            raise ValueError(
-                "Peak equity cannot be below current equity."
-            )
+            raise ValueError("Peak equity cannot be below current equity.")
 
         if self.peak_equity < self.day_start_equity:
+            raise ValueError("Peak equity cannot be below day-start equity.")
 
-            raise ValueError(
-                "Peak equity cannot be below day-start equity."
-            )
-
-        expected_equity = (
-
-            self.initial_capital
-
-            + self.realized_pnl
-
-            + self.unrealized_pnl
-
-        )
+        expected_equity = self.initial_capital + self.realized_pnl + self.unrealized_pnl
 
         if self.equity != expected_equity:
+            raise ValueError("Portfolio accounting mismatch.")
 
-            raise ValueError(
-                "Portfolio accounting mismatch."
-            )
-
-        for name in [
-
-            "trading_halted",
-            "daily_entry_halted"
-
-        ]:
-
+        for name in ["trading_halted", "daily_entry_halted"]:
             if type(getattr(self, name)) is not bool:
-
-                raise ValueError(
-                    f"{name} must be boolean."
-                )
+                raise ValueError(f"{name} must be boolean.")
 
     @property
+    @isolated_accounting
     def market_value(self):
 
-        return sum(
-
-            (
-                position.market_value
-                for position in self.positions
-            ),
-
-            ZERO
-
-        )
+        return normalize_money(sum((position.market_value for position in self.positions), ZERO))
 
     @property
+    @isolated_accounting
     def equity(self):
 
-        return self.cash + self.market_value
+        return normalize_money(self.cash + self.market_value)
 
     @property
+    @isolated_accounting
     def open_positions(self):
 
         return len(self.positions)
 
     @property
+    @isolated_accounting
     def existing_symbols(self):
 
-        return tuple(
-
-            position.symbol
-
-            for position in self.positions
-
-        )
+        return tuple(position.symbol for position in self.positions)
 
     @property
+    @isolated_accounting
     def total_exposure(self):
 
         return self.market_value
 
     @property
+    @isolated_accounting
     def exposure_percent(self):
 
         if self.equity <= ZERO:
-
             return ZERO
 
-        return (
-            self.total_exposure
-            / self.equity
-            * HUNDRED
-        )
+        return self.total_exposure / self.equity * HUNDRED
 
     @property
+    @isolated_accounting
     def aggregate_open_risk(self):
 
-        return sum(
-
-            (
-                position.planned_risk
-                for position in self.positions
-            ),
-
-            ZERO
-
-        )
+        return normalize_money(sum((position.planned_risk for position in self.positions), ZERO))
 
     @property
+    @isolated_accounting
     def unrealized_pnl(self):
 
-        return sum(
-
-            (
-                position.unrealized_pnl
-                for position in self.positions
-            ),
-
-            ZERO
-
-        )
+        return normalize_money(sum((position.unrealized_pnl for position in self.positions), ZERO))
 
     @property
+    @isolated_accounting
     def total_pnl(self):
 
-        return (
-            self.realized_pnl
-            + self.unrealized_pnl
-        )
+        return normalize_money(self.realized_pnl + self.unrealized_pnl)
 
     @property
+    @isolated_accounting
     def daily_loss(self):
 
-        return max(
-
-            ZERO,
-
-            self.day_start_equity - self.equity
-
-        )
+        return max(ZERO, normalize_money(self.day_start_equity - self.equity))
 
     @property
+    @isolated_accounting
     def daily_loss_percent(self):
 
-        return (
-
-            self.daily_loss
-
-            / self.day_start_equity
-
-            * HUNDRED
-
-        )
+        return self.daily_loss / self.day_start_equity * HUNDRED
 
     @property
+    @isolated_accounting
     def drawdown_percent(self):
 
-        return (
-
-            (self.peak_equity - self.equity)
-
-            / self.peak_equity
-
-            * HUNDRED
-
-        )
+        return (self.peak_equity - self.equity) / self.peak_equity * HUNDRED
 
     @property
+    @isolated_accounting
     def return_percent(self):
 
-        return (
-
-            (self.equity - self.initial_capital)
-
-            / self.initial_capital
-
-            * HUNDRED
-
-        )
+        return (self.equity - self.initial_capital) / self.initial_capital * HUNDRED
 
 
 # ============================================================
@@ -828,7 +655,6 @@ class PortfolioAccountState:
 
 @dataclass(frozen=True, slots=True)
 class PortfolioSnapshot:
-
     session: date
 
     account: PortfolioAccountState
@@ -839,98 +665,41 @@ class PortfolioSnapshot:
 
     rejected_opportunities: int = 0
 
+    @isolated_accounting
     def __post_init__(self):
 
-        validate_session(
-            self.session,
-            "session"
-        )
+        validate_session(self.session, "session")
 
-        if not isinstance(
-            self.account,
-            PortfolioAccountState
-        ):
+        if not isinstance(self.account, PortfolioAccountState):
+            raise ValueError("Invalid portfolio account state.")
 
-            raise ValueError(
-                "Invalid portfolio account state."
-            )
+        for name in ["entries", "exits", "rejected_opportunities"]:
+            validate_integer(getattr(self, name), name)
 
-        for name in [
-
-            "entries",
-            "exits",
-            "rejected_opportunities"
-
-        ]:
-
-            validate_integer(
-                getattr(self, name),
-                name
-            )
-
+    @isolated_accounting
     def to_record(self):
 
         account = self.account
 
         return {
-
             "session": self.session.isoformat(),
-
             "cash": str(account.cash),
-
-            "market_value": str(
-                account.market_value
-            ),
-
+            "market_value": str(account.market_value),
             "equity": str(account.equity),
-
-            "realized_pnl": str(
-                account.realized_pnl
-            ),
-
-            "unrealized_pnl": str(
-                account.unrealized_pnl
-            ),
-
+            "realized_pnl": str(account.realized_pnl),
+            "unrealized_pnl": str(account.unrealized_pnl),
             "open_positions": account.open_positions,
-
-            "total_exposure": str(
-                account.total_exposure
-            ),
-
-            "exposure_percent": str(
-                account.exposure_percent
-            ),
-
-            "aggregate_open_risk": str(
-                account.aggregate_open_risk
-            ),
-
-            "daily_loss_percent": str(
-                account.daily_loss_percent
-            ),
-
-            "drawdown_percent": str(
-                account.drawdown_percent
-            ),
-
-            "return_percent": str(
-                account.return_percent
-            ),
-
+            "total_exposure": str(account.total_exposure),
+            "exposure_percent": str(account.exposure_percent),
+            "aggregate_open_risk": str(account.aggregate_open_risk),
+            "daily_loss_percent": str(account.daily_loss_percent),
+            "drawdown_percent": str(account.drawdown_percent),
+            "return_percent": str(account.return_percent),
             "entries": self.entries,
-
             "exits": self.exits,
-
-            "rejected_opportunities":
-                self.rejected_opportunities,
-
-            "trading_halted":
-                account.trading_halted,
-
-            "daily_entry_halted":
-                account.daily_entry_halted
-
+            "rejected_opportunities": self.rejected_opportunities,
+            "trading_halted": account.trading_halted,
+            "daily_entry_halted": account.daily_entry_halted,
         }
 
 
@@ -941,7 +710,6 @@ class PortfolioSnapshot:
 
 @dataclass(frozen=True, slots=True)
 class PortfolioOpportunity:
-
     symbol: str
 
     strategy: str
@@ -958,86 +726,70 @@ class PortfolioOpportunity:
 
     risk_reward_ratio: Decimal
 
+    @isolated_accounting
     def __post_init__(self):
 
         validate_symbol(self.symbol)
 
-        validate_text(
-            self.strategy,
-            "strategy"
-        )
+        validate_text(self.strategy, "strategy")
 
-        validate_session(
-            self.signal_date,
-            "signal_date"
-        )
+        validate_session(self.signal_date, "signal_date")
 
-        object.__setattr__(
-
-            self,
-
-            "score",
-
-            validate_score(self.score)
-
-        )
+        object.__setattr__(self, "score", validate_score(self.score))
 
         normalize_fields(
-
             self,
-
             positive=(
-
                 "reference_price",
                 "atr",
                 "stop_atr_multiplier",
-                "risk_reward_ratio"
+                "risk_reward_ratio",
+            ),
+        )
 
-            )
-
+        normalize_price_fields(
+            self,
+            ("reference_price",),
         )
 
         if self.risk_reward_ratio < ONE:
-
-            raise ValueError(
-                "Risk-reward ratio must be at least 1."
-            )
+            raise ValueError("Risk-reward ratio must be at least 1.")
 
     @property
+    @isolated_accounting
     def stop_distance(self):
 
-        return (
-            self.atr
-            * self.stop_atr_multiplier
-        )
+        return self.atr * self.stop_atr_multiplier
 
+    @isolated_accounting
     def prices_for_entry(self, entry_price):
 
-        entry = positive_decimal(
-
-            entry_price,
-
-            "entry_price"
-
-        )
+        entry = normalize_price(positive_decimal(entry_price, "entry_price"))
 
         stop = entry - self.stop_distance
 
         if stop <= ZERO:
+            raise ValueError("Calculated stop price is invalid.")
 
+        try:
+            stop = normalize_price(stop)
+        except ValueError as error:
             raise ValueError(
                 "Calculated stop price is invalid."
-            )
+            ) from error
 
-        target = (
+        if stop <= ZERO:
+            raise ValueError("Calculated stop price is invalid.")
 
-            entry
-
-            + self.stop_distance
-
-            * self.risk_reward_ratio
-
+        target = normalize_price(
+            entry + self.stop_distance * self.risk_reward_ratio
         )
+
+        if not stop < entry < target:
+
+            raise ValueError(
+                "Calculated stop or target is invalid at price precision."
+            )
 
         return stop, target
 
@@ -1049,7 +801,6 @@ class PortfolioOpportunity:
 
 @dataclass(frozen=True, slots=True)
 class PortfolioRiskEvent:
-
     session: date
 
     event_type: str
@@ -1062,38 +813,18 @@ class PortfolioRiskEvent:
 
     symbol: str | None = None
 
+    @isolated_accounting
     def __post_init__(self):
 
-        validate_session(
-            self.session,
-            "session"
-        )
+        validate_session(self.session, "session")
 
-        validate_text(
-            self.event_type,
-            "event_type"
-        )
+        validate_text(self.event_type, "event_type")
 
-        validate_text(
-            self.reason,
-            "reason"
-        )
+        validate_text(self.reason, "reason")
 
-        normalize_fields(
-
-            self,
-
-            nonnegative=(
-
-                "observed_value",
-                "threshold"
-
-            )
-
-        )
+        normalize_fields(self, nonnegative=("observed_value", "threshold"))
 
         if self.symbol is not None:
-
             validate_symbol(self.symbol)
 
 
@@ -1104,7 +835,6 @@ class PortfolioRiskEvent:
 
 @dataclass(frozen=True, slots=True)
 class PortfolioRejection:
-
     session: date
 
     symbol: str
@@ -1115,34 +845,18 @@ class PortfolioRejection:
 
     reason: str
 
+    @isolated_accounting
     def __post_init__(self):
 
-        validate_session(
-            self.session,
-            "session"
-        )
+        validate_session(self.session, "session")
 
         validate_symbol(self.symbol)
 
-        validate_text(
-            self.strategy,
-            "strategy"
-        )
+        validate_text(self.strategy, "strategy")
 
-        validate_text(
-            self.reason,
-            "reason"
-        )
+        validate_text(self.reason, "reason")
 
-        object.__setattr__(
-
-            self,
-
-            "score",
-
-            validate_score(self.score)
-
-        )
+        object.__setattr__(self, "score", validate_score(self.score))
 
 
 # ============================================================
@@ -1152,7 +866,6 @@ class PortfolioRejection:
 
 @dataclass(frozen=True, slots=True)
 class PortfolioExecutionResult:
-
     executed: bool
 
     symbol: str
@@ -1163,71 +876,34 @@ class PortfolioExecutionResult:
 
     trade: PortfolioTrade | None = None
 
+    @isolated_accounting
     def __post_init__(self):
 
         if type(self.executed) is not bool:
-
-            raise ValueError(
-                "executed must be boolean."
-            )
+            raise ValueError("executed must be boolean.")
 
         validate_symbol(self.symbol)
 
-        validate_text(
-            self.reason,
-            "reason"
-        )
+        validate_text(self.reason, "reason")
 
         if self.position is not None:
-
-            if not isinstance(
-                self.position,
-                PortfolioPosition
-            ):
-
-                raise ValueError(
-                    "Invalid execution position."
-                )
+            if not isinstance(self.position, PortfolioPosition):
+                raise ValueError("Invalid execution position.")
 
             if self.position.symbol != self.symbol:
-
-                raise ValueError(
-                    "Execution position symbol mismatch."
-                )
+                raise ValueError("Execution position symbol mismatch.")
 
         if self.trade is not None:
-
-            if not isinstance(
-                self.trade,
-                PortfolioTrade
-            ):
-
-                raise ValueError(
-                    "Invalid execution trade."
-                )
+            if not isinstance(self.trade, PortfolioTrade):
+                raise ValueError("Invalid execution trade.")
 
             if self.trade.symbol != self.symbol:
+                raise ValueError("Execution trade symbol mismatch.")
 
-                raise ValueError(
-                    "Execution trade symbol mismatch."
-                )
-
-        records = (
-
-            int(self.position is not None)
-
-            + int(self.trade is not None)
-
-        )
+        records = int(self.position is not None) + int(self.trade is not None)
 
         if self.executed and records != 1:
-
-            raise ValueError(
-                "Successful execution requires one record."
-            )
+            raise ValueError("Successful execution requires one record.")
 
         if not self.executed and records != 0:
-
-            raise ValueError(
-                "Rejected execution cannot contain records."
-            )
+            raise ValueError("Rejected execution cannot contain records.")

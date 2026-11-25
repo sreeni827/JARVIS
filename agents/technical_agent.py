@@ -1,19 +1,15 @@
-from market.market_data import MarketDataEngine
 from market.indicators import TechnicalIndicators
+from market.market_data import MarketDataEngine
 
 
 class TechnicalAgent:
-
     def __init__(self):
 
         self.market = MarketDataEngine()
 
     def analyze(self, symbol):
 
-        history = self.market.get_historical_data(
-            symbol,
-            days=400
-        )
+        history = self.market.get_historical_data(symbol, days=400)
 
         data = TechnicalIndicators.calculate(history)
 
@@ -38,12 +34,11 @@ class TechnicalAgent:
             "momentum": float(latest["ROC_10"]),
             "support": float(latest["SUPPORT"]),
             "resistance": float(latest["RESISTANCE"]),
-            "trend": str(latest["TREND"])
+            "trend": str(latest["TREND"]),
         }
 
 
 if __name__ == "__main__":
-
     agent = TechnicalAgent()
 
     symbol = "NVDA"

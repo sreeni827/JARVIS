@@ -1,11 +1,10 @@
 import os
-from pathlib import Path
 from decimal import Decimal
+from pathlib import Path
 
 import requests
-from dotenv import load_dotenv
 from alpaca.trading.client import TradingClient
-
+from dotenv import load_dotenv
 
 # Load configuration
 BASE_DIR = Path(__file__).resolve().parent
@@ -15,9 +14,7 @@ API_KEY = os.getenv("ALPACA_API_KEY")
 SECRET_KEY = os.getenv("ALPACA_SECRET_KEY")
 DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK_URL")
 
-STARTING_CAPITAL = Decimal(
-    os.getenv("STARTING_CAPITAL", "100")
-)
+STARTING_CAPITAL = Decimal(os.getenv("STARTING_CAPITAL", "100"))
 
 
 # Discord notification
@@ -28,12 +25,7 @@ def send_discord(message):
 
     try:
         response = requests.post(
-            DISCORD_WEBHOOK,
-            json={
-                "username": "JARVIS",
-                "content": message
-            },
-            timeout=10
+            DISCORD_WEBHOOK, json={"username": "JARVIS", "content": message}, timeout=10
         )
 
         response.raise_for_status()
@@ -65,21 +57,14 @@ def main():
         return
 
     try:
-
         # Connect to Alpaca paper trading
-        client = TradingClient(
-            api_key=API_KEY,
-            secret_key=SECRET_KEY,
-            paper=True
-        )
+        client = TradingClient(api_key=API_KEY, secret_key=SECRET_KEY, paper=True)
 
         account = client.get_account()
         clock = client.get_clock()
         positions = client.get_all_positions()
 
-        market_status = (
-            "OPEN" if clock.is_open else "CLOSED"
-        )
+        market_status = "OPEN" if clock.is_open else "CLOSED"
 
         print("\nSYSTEM STATUS")
         print("-" * 55)
@@ -130,7 +115,6 @@ def main():
         print("=" * 55)
 
     except Exception as error:
-
         print("\nJARVIS CONNECTION FAILED")
         print(f"Error Type: {type(error).__name__}")
         print("Check Alpaca paper credentials and internet connection.")

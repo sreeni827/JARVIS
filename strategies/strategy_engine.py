@@ -1,10 +1,9 @@
+from datetime import UTC, datetime
 from pathlib import Path
-from datetime import datetime, timezone
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 import yaml
-
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = BASE_DIR / "data"
@@ -12,7 +11,6 @@ CONFIG_FILE = BASE_DIR / "config" / "strategies.yaml"
 
 
 class StrategyEngine:
-
     def __init__(self):
 
         with open(CONFIG_FILE, "r", encoding="utf-8") as file:
@@ -20,19 +18,14 @@ class StrategyEngine:
 
     @property
     def settings(self):
-        return self.config["settings"]  
+        return self.config["settings"]
 
-    
     def load_latest_rankings(self):
 
-        files = sorted(
-            DATA_DIR.glob("opportunity_rankings_*.csv")
-        )
+        files = sorted(DATA_DIR.glob("opportunity_rankings_*.csv"))
 
         if not files:
-            raise FileNotFoundError(
-                "No opportunity ranking files found."
-            )
+            raise FileNotFoundError("No opportunity ranking files found.")
 
         latest = files[-1]
 
@@ -49,13 +42,9 @@ class StrategyEngine:
 
         return (
             row["trend"] == "BULLISH"
-            and cfg["minimum_rsi"]
-            <= row["rsi"]
-            <= cfg["maximum_rsi"]
-            and row["momentum"]
-            >= cfg["minimum_momentum"]
-            and row["relative_volume"]
-            >= cfg["minimum_relative_volume"]
+            and cfg["minimum_rsi"] <= row["rsi"] <= cfg["maximum_rsi"]
+            and row["momentum"] >= cfg["minimum_momentum"]
+            and row["relative_volume"] >= cfg["minimum_relative_volume"]
             and row["macd"] > row["macd_signal"]
             and row["ema_9"] > row["ema_21"]
         )
@@ -70,11 +59,8 @@ class StrategyEngine:
         return (
             row["trend"] == "BULLISH"
             and row["close"] > row["resistance"]
-            and row["relative_volume"]
-            >= cfg["minimum_relative_volume"]
-            and cfg["minimum_rsi"]
-            <= row["rsi"]
-            <= cfg["maximum_rsi"]
+            and row["relative_volume"] >= cfg["minimum_relative_volume"]
+            and cfg["minimum_rsi"] <= row["rsi"] <= cfg["maximum_rsi"]
         )
 
     def pullback_strategy(self, row):
@@ -84,20 +70,13 @@ class StrategyEngine:
         if not cfg["enabled"]:
             return False
 
-        ema_distance = (
-            abs(row["close"] - row["ema_21"])
-            / row["ema_21"]
-            * 100
-        )
+        ema_distance = abs(row["close"] - row["ema_21"]) / row["ema_21"] * 100
 
         return (
             row["sma_20"] > row["sma_50"]
             and row["close"] > row["sma_200"]
-            and cfg["minimum_rsi"]
-            <= row["rsi"]
-            <= cfg["maximum_rsi"]
-            and ema_distance
-            <= cfg["maximum_ema_distance_percent"]
+            and cfg["minimum_rsi"] <= row["rsi"] <= cfg["maximum_rsi"]
+            and ema_distance <= cfg["maximum_ema_distance_percent"]
         )
 
     def no_trade(self, row, reason):
@@ -111,7 +90,7 @@ class StrategyEngine:
             "take_profit": 0.0,
             "risk_reward": 0.0,
             "score": row["score"],
-            "reason": reason
+            "reason": reason,
         }
 
     def generate_signal(self, row):
@@ -130,91 +109,51 @@ class StrategyEngine:
             "sma_20",
             "sma_50",
             "sma_200",
-            "resistance"
+            "resistance",
         ]
 
         values = row[required].astype(float)
 
         if not np.isfinite(values).all():
+            return self.no_trade(row, "Invalid market data.")
 
-            return self.no_trade(
-                row,
-                "Invalid market data."
-            )
-
-        if (
-            row["close"] <= 0
-            or row["atr"] <= 0
-            or row["ema_21"] <= 0
-        ):
-
-            return self.no_trade(
-                row,
-                "Invalid price or volatility."
-            )
+        if row["close"] <= 0 or row["atr"] <= 0 or row["ema_21"] <= 0:
+            return self.no_trade(row, "Invalid price or volatility.")
 
         if row["score"] < self.settings["minimum_score"]:
+            return self.no_trade(row, "Opportunity score below minimum.")
 
-            return self.no_trade(
-                row,
-                "Opportunity score below minimum."
-            )
-
-        atr_percent = (
-            row["atr"] / row["close"] * 100
-        )
+        atr_percent = row["atr"] / row["close"] * 100
 
         if atr_percent > self.settings["maximum_atr_percent"]:
-
-            return self.no_trade(
-                row,
-                "Volatility exceeds strategy limit."
-            )
+            return self.no_trade(row, "Volatility exceeds strategy limit.")
 
         strategy = None
 
         if self.breakout_strategy(row):
-
             strategy = "BREAKOUT"
 
         elif self.momentum_strategy(row):
-
             strategy = "MOMENTUM"
 
         elif self.pullback_strategy(row):
-
             strategy = "PULLBACK"
 
         if strategy is None:
-
-            return self.no_trade(
-                row,
-                "No strategy conditions satisfied."
-            )
+            return self.no_trade(row, "No strategy conditions satisfied.")
 
         entry = float(row["close"])
 
-        stop_distance = (
-            float(row["atr"])
-            * self.settings["stop_atr_multiplier"]
-        )
+        stop_distance = float(row["atr"]) * self.settings["stop_atr_multiplier"]
 
         stop_loss = entry - stop_distance
 
         if stop_loss <= 0:
+            return self.no_trade(row, "Invalid calculated stop-loss.")
 
-            return self.no_trade(
-                row,
-                "Invalid calculated stop-loss."
-            )
+        reward_ratio = self.settings["minimum_risk_reward"]
 
-        reward_ratio = self.settings[
-            "minimum_risk_reward"
-        ]
-
-        take_profit = (
-            entry + stop_distance * reward_ratio
-        )
+        take_profit = entry + stop_distance * reward_ratio
 
         return {
             "symbol": row["symbol"],
@@ -225,7 +164,7 @@ class StrategyEngine:
             "take_profit": round(take_profit, 4),
             "risk_reward": reward_ratio,
             "score": row["score"],
-            "reason": f"{strategy} conditions satisfied."
+            "reason": f"{strategy} conditions satisfied.",
         }
 
     def analyze(self, rankings):
@@ -233,7 +172,6 @@ class StrategyEngine:
         results = []
 
         for _, row in rankings.iterrows():
-
             signal = self.generate_signal(row)
 
             results.append(signal)
@@ -249,9 +187,7 @@ class StrategyEngine:
 
     def display_summary(self, results):
 
-        candidates = results[
-            results["signal"] == "BUY"
-        ]
+        candidates = results[results["signal"] == "BUY"]
 
         print("\n" + "=" * 75)
         print("                  STRATEGY SUMMARY")
@@ -259,13 +195,9 @@ class StrategyEngine:
 
         print(f"Symbols Analyzed : {len(results)}")
         print(f"Buy Signals      : {len(candidates)}")
-        print(
-            f"No Trade         : "
-            f"{len(results) - len(candidates)}"
-        )
+        print(f"No Trade         : {len(results) - len(candidates)}")
 
         if candidates.empty:
-
             print("\nNo qualifying trading setups found.")
 
             return
@@ -277,30 +209,21 @@ class StrategyEngine:
             "stop_loss",
             "take_profit",
             "risk_reward",
-            "score"
+            "score",
         ]
 
         print("\nHYPOTHETICAL TRADE CANDIDATES")
         print("-" * 75)
 
-        print(
-            candidates[columns]
-            .round(2)
-            .to_string(index=False)
-        )
+        print(candidates[columns].round(2).to_string(index=False))
 
     def save_results(self, results):
 
         DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-        timestamp = datetime.now(
-            timezone.utc
-        ).strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
 
-        filename = (
-            DATA_DIR /
-            f"strategy_signals_{timestamp}.csv"
-        )
+        filename = DATA_DIR / f"strategy_signals_{timestamp}.csv"
 
         results.to_csv(filename, index=False)
 
@@ -308,7 +231,6 @@ class StrategyEngine:
 
 
 if __name__ == "__main__":
-
     print("=" * 75)
     print("                 JARVIS STRATEGY ENGINE")
     print("                       VERSION 0.7")

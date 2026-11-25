@@ -1,13 +1,12 @@
-from pathlib import Path
-from datetime import datetime, timezone
 import time
+from datetime import UTC, datetime
+from pathlib import Path
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 import yaml
 
 from agents.technical_agent import TechnicalAgent
-
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 
@@ -17,7 +16,6 @@ DATA_DIR = BASE_DIR / "data"
 
 
 class MarketScanner:
-
     def __init__(self):
 
         self.agent = TechnicalAgent()
@@ -28,20 +26,13 @@ class MarketScanner:
 
     def load_watchlist(self):
 
-        with open(
-            WATCHLIST_FILE,
-            "r",
-            encoding="utf-8"
-        ) as file:
-
+        with open(WATCHLIST_FILE, "r", encoding="utf-8") as file:
             config = yaml.safe_load(file)
 
         symbols = {}
 
         for sector, stocks in config["watchlist"].items():
-
             for symbol in stocks:
-
                 symbols[symbol] = sector
 
         return symbols
@@ -56,13 +47,8 @@ class MarketScanner:
 
         print(f"\nScanning {total} symbols...\n")
 
-        for index, (symbol, sector) in enumerate(
-            self.watchlist.items(),
-            start=1
-        ):
-
+        for index, (symbol, sector) in enumerate(self.watchlist.items(), start=1):
             try:
-
                 result = self.agent.analyze(symbol)
 
                 numeric_values = [
@@ -88,16 +74,10 @@ class MarketScanner:
                 )
 
             except Exception as error:
-
-                self.errors.append({
-                    "symbol": symbol,
-                    "error": type(error).__name__
-                })
+                self.errors.append({"symbol": symbol, "error": type(error).__name__})
 
                 print(
-                    f"[{index:02d}/{total}] "
-                    f"{symbol:<6} "
-                    f"FAILED: {type(error).__name__}"
+                    f"[{index:02d}/{total}] {symbol:<6} FAILED: {type(error).__name__}"
                 )
 
             time.sleep(0.3)
@@ -106,58 +86,34 @@ class MarketScanner:
 
     def save_results(self, results):
 
-        DATA_DIR.mkdir(
-            parents=True,
-            exist_ok=True
-        )
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-        timestamp = datetime.now(
-            timezone.utc
-        ).strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
 
-        filename = (
-            DATA_DIR /
-            f"market_scan_{timestamp}.csv"
-        )
+        filename = DATA_DIR / f"market_scan_{timestamp}.csv"
 
-        results.to_csv(
-            filename,
-            index=False
-        )
+        results.to_csv(filename, index=False)
 
         print(f"\nResults saved to: {filename}")
 
     def display_summary(self, results):
 
         if results.empty:
-
             print("\nNo successful scan results.")
 
             return
 
-        bullish = results[
-            results["trend"] == "BULLISH"
-        ]
+        bullish = results[results["trend"] == "BULLISH"]
 
-        bearish = results[
-            results["trend"] == "BEARISH"
-        ]
+        bearish = results[results["trend"] == "BEARISH"]
 
-        neutral = results[
-            results["trend"] == "NEUTRAL"
-        ]
+        neutral = results[results["trend"] == "NEUTRAL"]
 
-        unusual_volume = results[
-            results["relative_volume"] >= 2
-        ]
+        unusual_volume = results[results["relative_volume"] >= 2]
 
-        oversold = results[
-            results["rsi"] < 30
-        ]
+        oversold = results[results["rsi"] < 30]
 
-        overbought = results[
-            results["rsi"] > 70
-        ]
+        overbought = results[results["rsi"] > 70]
 
         print("\n" + "=" * 65)
         print("                  MARKET SCAN SUMMARY")
@@ -173,24 +129,14 @@ class MarketScanner:
         print(f"Oversold          : {len(oversold)}")
         print(f"Overbought        : {len(overbought)}")
 
-        columns = [
-            "symbol",
-            "close",
-            "trend",
-            "rsi",
-            "relative_volume",
-            "momentum"
-        ]
+        columns = ["symbol", "close", "trend", "rsi", "relative_volume", "momentum"]
 
         print("\nTOP POSITIVE MOMENTUM")
         print("-" * 65)
 
         print(
             results[results["momentum"] > 0]
-            .sort_values(
-                "momentum",
-                ascending=False
-            )[columns]
+            .sort_values("momentum", ascending=False)[columns]
             .head(5)
             .round(2)
             .to_string(index=False)
@@ -201,10 +147,7 @@ class MarketScanner:
 
         print(
             results[results["momentum"] < 0]
-            .sort_values(
-                "momentum",
-                ascending=True
-            )[columns]
+            .sort_values("momentum", ascending=True)[columns]
             .head(5)
             .round(2)
             .to_string(index=False)
@@ -214,30 +157,21 @@ class MarketScanner:
         print("-" * 65)
 
         print(
-            results.sort_values(
-                "relative_volume",
-                ascending=False
-            )[columns]
+            results.sort_values("relative_volume", ascending=False)[columns]
             .head(5)
             .round(2)
             .to_string(index=False)
         )
 
         if self.errors:
-
             print("\nFAILED SYMBOLS")
             print("-" * 65)
 
             for error in self.errors:
-
-                print(
-                    f"{error['symbol']}: "
-                    f"{error['error']}"
-                )
+                print(f"{error['symbol']}: {error['error']}")
 
 
 if __name__ == "__main__":
-
     print("=" * 65)
     print("                  JARVIS MARKET SCANNER")
     print("                       VERSION 0.4")
@@ -252,7 +186,6 @@ if __name__ == "__main__":
     scanner.display_summary(results)
 
     if not results.empty:
-
         scanner.save_results(results)
 
     elapsed = time.perf_counter() - start_time
